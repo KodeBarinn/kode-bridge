@@ -37,7 +37,7 @@ fn bench_version(c: &mut Criterion) {
     dotenv().ok();
     let rt = Runtime::new().unwrap();
     let socket_path = env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/custom.sock".to_string());
-    let client = rt.block_on(IpcHttpClient::new(&socket_path));
+    let client = IpcHttpClient::new(&socket_path);
     let mut group = c.benchmark_group("ipc_http_version");
     group.bench_function("version_once", |b| {
         b.iter(|| {

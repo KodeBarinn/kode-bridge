@@ -25,7 +25,7 @@ impl UnixIpcHttpClient {
 }
 
 impl UnixIpcHttpClient {
-    pub async fn new(socket_path: &str) -> Self {
+    pub fn new(socket_path: &str) -> Self {
         UnixIpcHttpClient {
             socket_path: socket_path.to_string(),
         }

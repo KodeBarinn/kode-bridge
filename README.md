@@ -17,7 +17,7 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let client = IpcHttpClient::new("/tmp/some_socket_path.sock").await;
+    let client = IpcHttpClient::new("/tmp/some_socket_path.sock");
     let resp = client.request("POST", "/api", Some(&json!({"foo": "bar"}))).await?;
     println!("Status: {}", resp.status);
     println!("Headers: {:?}", resp.headers);
