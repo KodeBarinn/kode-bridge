@@ -1,0 +1,27 @@
+[package]
+name = "kode-bridge"
+authors = ["Tunglies"]
+version = "0.1.0"
+edition = "2024"
+description = "Cross-platform Rust library for sending HTTP requests over IPC channels (Unix sockets, planned Windows named pipes)."
+license = "Apache-2.0"
+repository = "https://github.com/KodeBarinn/kode-bridge"
+readme = "README.md"
+
+[dependencies]
+interprocess = { version = "2", features = ["tokio"] }
+tokio = { version = "1", features = ["full"] }
+thiserror = "2"
+dotenv = "0.15.0"
+env = "1.0.1"
+serde_json = "1.0.140"
+serde = { version = "1.0.219", features = ["derive"] }
+
+[dev-dependencies]
+criterion = {version = "0.5.0", features = ["async"]}
+
+[[bench]]
+name = "bench_version"
+path = "benches/unix/bench_version.rs"
+harness = false
+
