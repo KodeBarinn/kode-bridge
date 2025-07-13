@@ -22,22 +22,22 @@ criterion = {version = "0.6.0", features = ["async"]}
 
 [[example]]
 name = "unix_request"
-path = "examples/unix_request.rs"
+path = "examples/unix/request.rs"
 
 [[example]]
 name = "unix_request_large"
-path = "examples/unix_request_large.rs"
+path = "examples/unix/request_large.rs"
 
 [[example]]
 name = "windows_request"
-path = "examples/windows_request.rs"
+path = "examples/windows/request.rs"
 
 [[example]]
 name = "windows_request_large"
-path = "examples/windows_request_large.rs"
+path = "examples/windows/request_large.rs"
 
 [[bench]]
-name = "bench_version"
+name = "bench_version_unix"
 path = "benches/unix/bench_version.rs"
 harness = false
 
