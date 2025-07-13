@@ -1,18 +1,18 @@
-#![cfg(unix)]
+#![cfg(windows)]
 
 /// This example demonstrates how to use `IpcHttpClient` from the `kode_bridge` crate to send an HTTP GET request
-/// over an IPC transport (such as a Unix socket or NamedPipe, depending on the platform and environment).
+/// over an IPC transport (Windows named pipe) on Windows platform.
 ///
-/// The socket path or named pipe is determined by the `CUSTOM_SOCK` environment variable, which is loaded from
-/// a `.env` file if present. The client sends a GET request to the `/version` endpoint and prints the raw response
-/// as well as its JSON representation.
+/// The named pipe path is determined by the `CUSTOM_PIPE` environment variable, which is loaded from
+/// a `.env` file if present. The client sends a GET request to the `/proxies` endpoint which typically
+/// returns a larger response compared to the `/version` endpoint.
 ///
 /// # Errors
 /// Returns an error if the environment variable is missing, the client fails to connect, or the request fails.
 ///
 /// # Example
 /// ```env
-/// CUSTOM_SOCK=/path/to/socket
+/// CUSTOM_PIPE=\\.\pipe\my_pipe
 /// ```
 
 use dotenv::dotenv;
@@ -24,9 +24,9 @@ use std::env;
 async fn main() -> Result<(), AnyError> {
     dotenv().ok();
 
-    let ipc_path = env::var("CUSTOM_SOCK")?;
+    let ipc_path = env::var("CUSTOM_PIPE")?;
     let client = IpcHttpClient::new(&ipc_path);
-    let response = client.request("GET", "/version", None).await?;
+    let response = client.request("GET", "/proxies", None).await?;
     println!("{:?}", response);
     println!("{}", response.json()?);
     Ok(())

@@ -1,6 +1,9 @@
+#![cfg(unix)]
+
 use dotenv::dotenv;
 use kode_bridge::IpcHttpClient;
 use kode_bridge::errors::AnyError;
+use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), AnyError> {

@@ -1,42 +1,30 @@
+use interprocess::os::windows::named_pipe::tokio::PipeStream;
+
+use crate::errors::AnyResult;
+use crate::ipc_http::http_over_stream::send_http_over_stream;
+use crate::types::Response;
+
 pub struct WindowsIpcHttpClient {
-    socket_path: String,
+    named_path: String,
 }
 
 impl WindowsIpcHttpClient {
-    pub fn new(socket_path: &str) -> Self {
-        WindowsIpcHttpClient {
-            socket_path: socket_path.to_string(),
+    pub fn new<S>(named_path: S) -> Self
+    where
+        S: Into<String>,
+    {
+        Self {
+            named_path: named_path.into()
         }
     }
-}
 
-#[async_trait]
-impl SharedIpcHttpClient for WindowsIpcHttpClient {
-    async fn new(socket_path: &str) -> Self {
-        WindowsIpcHttpClient::new(socket_path)
-    }
-
-    async fn request(
+    pub async fn request(
         &self,
         method: &str,
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> AnyResult<Response> {
-        let name = self.get_name()?;
-        // TODO Replace to Windows specific socket connection namedpipe
-        let stream = LocalSocketStream::connect(name).await?;
-        let body_bytes = if let Some(b) = body {
-            Some(serde_json::to_vec(b)?)
-        } else {
-            None
-        };
-        send_http_over_stream(
-            stream,
-            method,
-            path,
-            body_bytes.as_deref(),
-            Some("application/json"),
-        )
-        .await
+        let stream = PipeStream::connect_by_path(self.named_path.as_str()).await?;
+        send_http_over_stream(stream, method, path, body).await
     }
 }

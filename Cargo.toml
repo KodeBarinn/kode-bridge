@@ -20,8 +20,29 @@ dotenv = "0.15.0"
 env = "1.0.1"
 criterion = {version = "0.6.0", features = ["async"]}
 
+[[example]]
+name = "unix_request"
+path = "examples/unix_request.rs"
+
+[[example]]
+name = "unix_request_large"
+path = "examples/unix_request_large.rs"
+
+[[example]]
+name = "windows_request"
+path = "examples/windows_request.rs"
+
+[[example]]
+name = "windows_request_large"
+path = "examples/windows_request_large.rs"
+
 [[bench]]
 name = "bench_version"
 path = "benches/unix/bench_version.rs"
+harness = false
+
+[[bench]]
+name = "bench_version_windows"
+path = "benches/windows/bench_version.rs"
 harness = false
 

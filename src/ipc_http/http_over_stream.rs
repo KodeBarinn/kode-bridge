@@ -19,10 +19,17 @@ where
         None
     };
 
+    #[cfg(unix)]
     let mut request = format!(
         "{} {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n",
         method, path
     );
+    #[cfg(windows)]
+    let mut request = format!(
+        "{} {} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n",
+        method, path
+    );
+    
     if let Some(ref b) = body_bytes {
         if body.is_some() {
             request.push_str("Content-Type: application/json\r\n");
