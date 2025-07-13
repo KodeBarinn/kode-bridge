@@ -1,21 +1,24 @@
-use interprocess::os::windows::named_pipe::tokio::PipeStream;
+use std::path::Path;
+
+use interprocess::local_socket::tokio::prelude::LocalSocketStream;
+use interprocess::local_socket::traits::tokio::Stream;
+use interprocess::local_socket::{GenericFilePath, Name, ToFsName};
 
 use crate::errors::AnyResult;
 use crate::ipc_http::http_over_stream::send_http_over_stream;
 use crate::types::Response;
 
 pub struct WindowsIpcHttpClient {
-    named_path: String,
+    name: Name<'static>,
 }
 
 impl WindowsIpcHttpClient {
-    pub fn new<S>(named_path: S) -> Self
-    where
-        S: Into<String>,
-    {
-        Self {
-            named_path: named_path.into(),
-        }
+    pub fn new<P: AsRef<Path>>(named_path: P) -> AnyResult<Self> {
+        let name = named_path
+            .as_ref()
+            .to_fs_name::<GenericFilePath>()?
+            .into_owned();
+        Ok(Self { name })
     }
 
     pub async fn request(
@@ -24,7 +27,7 @@ impl WindowsIpcHttpClient {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> AnyResult<Response> {
-        let stream = PipeStream::connect_by_path(self.named_path.as_str()).await?;
+        let stream = LocalSocketStream::connect(self.name.clone()).await?;
         send_http_over_stream(stream, method, path, body).await
     }
 }
