@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use interprocess::local_socket::tokio::prelude::LocalSocketStream;
 use interprocess::local_socket::traits::tokio::Stream;
 use interprocess::local_socket::{GenericFilePath, Name, ToFsName};
@@ -11,12 +13,9 @@ pub struct UnixIpcHttpClient {
 }
 
 impl UnixIpcHttpClient {
-    pub fn new<S>(socket_path: S) -> AnyResult<Self>
-    where
-        S: Into<String>,
-    {
+    pub fn new<P: AsRef<Path>>(socket_path: P) -> AnyResult<Self> {
         let name = socket_path
-            .into()
+            .as_ref()
             .to_fs_name::<GenericFilePath>()?
             .into_owned();
         Ok(Self { name })

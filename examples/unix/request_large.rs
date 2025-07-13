@@ -10,7 +10,7 @@ async fn main() -> Result<(), AnyError> {
     dotenv().ok();
 
     let ipc_path = env::var("CUSTOM_SOCK")?;
-    let client = IpcHttpClient::new(&ipc_path);
+    let client = IpcHttpClient::new(&ipc_path)?;
     let response = client.request("GET", "/proxies", None).await?;
     println!("{:?}", response);
     println!("{}", response.json()?);
