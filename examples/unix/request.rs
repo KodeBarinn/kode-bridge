@@ -14,7 +14,6 @@
 /// ```env
 /// CUSTOM_SOCK=/path/to/socket
 /// ```
-
 use dotenv::dotenv;
 use kode_bridge::IpcHttpClient;
 use kode_bridge::errors::AnyError;
@@ -25,7 +24,7 @@ async fn main() -> Result<(), AnyError> {
     dotenv().ok();
 
     let ipc_path = env::var("CUSTOM_SOCK")?;
-    let client = IpcHttpClient::new(&ipc_path);
+    let client = IpcHttpClient::new(&ipc_path)?;
     let response = client.request("GET", "/version", None).await?;
     println!("{:?}", response);
     println!("{}", response.json()?);

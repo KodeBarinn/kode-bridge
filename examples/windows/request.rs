@@ -14,7 +14,6 @@
 /// ```env
 /// CUSTOM_PIPE=\\.\pipe\my_pipe
 /// ```
-
 use dotenv::dotenv;
 use kode_bridge::IpcHttpClient;
 use kode_bridge::errors::AnyError;

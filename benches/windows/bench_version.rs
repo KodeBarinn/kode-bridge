@@ -13,28 +13,6 @@ async fn bench_version_once(client: &IpcHttpClient) -> Response {
     result
 }
 
-// use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-// fn bench_version(c: &mut Criterion) {
-//     dotenv().ok();
-//     let rt = Runtime::new().unwrap();
-//     let pipe_path = env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\mihomo".to_string());
-//     let client = rt.block_on(IpcHttpClient::new(&pipe_path));
-//     let batch_sizes = [1];
-//     let mut group = c.benchmark_group("ipc_http_version");
-//     for &n in &batch_sizes {
-//         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-//             b.iter(|| {
-//                 rt.block_on(async {
-//                     for _ in 0..n {
-//                         let _ = bench_version_once(&client).await;
-//                     }
-//                 });
-//             });
-//         });
-//     }
-//     group.finish();
-// }
-
 fn bench_version(c: &mut Criterion) {
     dotenv().ok();
     let rt = Runtime::new().unwrap();
@@ -45,7 +23,7 @@ fn bench_version(c: &mut Criterion) {
     group.bench_function("version_once", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let client = IpcHttpClient::new(&pipe_path);
+                let client = IpcHttpClient::new(&pipe_path).unwrap();
                 let result = bench_version_once(&client).await;
                 result
             });

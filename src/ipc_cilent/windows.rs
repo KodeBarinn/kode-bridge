@@ -14,7 +14,7 @@ impl WindowsIpcHttpClient {
         S: Into<String>,
     {
         Self {
-            named_path: named_path.into()
+            named_path: named_path.into(),
         }
     }
 

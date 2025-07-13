@@ -29,7 +29,7 @@ where
         "{} {} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n",
         method, path
     );
-    
+
     if let Some(ref b) = body_bytes {
         if body.is_some() {
             request.push_str("Content-Type: application/json\r\n");
@@ -73,7 +73,9 @@ where
             if key.eq_ignore_ascii_case("Content-Length") {
                 content_length = value.parse::<usize>().ok();
             }
-            if key.eq_ignore_ascii_case("Transfer-Encoding") && value.eq_ignore_ascii_case("chunked") {
+            if key.eq_ignore_ascii_case("Transfer-Encoding")
+                && value.eq_ignore_ascii_case("chunked")
+            {
                 is_chunked = true;
             }
             headers_map.insert(key, value);
@@ -119,7 +121,7 @@ where
 
     Ok(Response {
         status,
-        headers: headers,
+        headers,
         body: body_str,
     })
 }
