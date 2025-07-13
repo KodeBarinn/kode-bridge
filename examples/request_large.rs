@@ -1,10 +1,11 @@
-#![cfg(windows)]
-
 /// This example demonstrates how to use `IpcHttpClient` from the `kode_bridge` crate to send an HTTP GET request
-/// over an IPC transport (Windows named pipe) on Windows platform.
+/// over an IPC transport (Unix socket on Unix-like systems, Named Pipe on Windows).
 ///
-/// The named pipe path is determined by the `CUSTOM_PIPE` environment variable, which is loaded from
-/// a `.env` file if present. The client sends a GET request to the `/proxies` endpoint which typically
+/// The IPC path is determined by platform-specific environment variables:
+/// - Unix: `CUSTOM_SOCK` (e.g., "/tmp/custom.sock")  
+/// - Windows: `CUSTOM_PIPE` (e.g., "\\.\pipe\my_pipe")
+///
+/// The client sends a GET request to the `/proxies` endpoint which typically
 /// returns a larger response compared to the `/version` endpoint.
 ///
 /// # Errors
@@ -12,6 +13,10 @@
 ///
 /// # Example
 /// ```env
+/// # Unix
+/// CUSTOM_SOCK=/tmp/custom.sock
+/// 
+/// # Windows  
 /// CUSTOM_PIPE=\\.\pipe\my_pipe
 /// ```
 use dotenv::dotenv;
@@ -23,8 +28,13 @@ use std::env;
 async fn main() -> Result<(), AnyError> {
     dotenv().ok();
 
+    // Use platform-appropriate environment variable
+    #[cfg(unix)]
+    let ipc_path = env::var("CUSTOM_SOCK")?;
+    #[cfg(windows)]
     let ipc_path = env::var("CUSTOM_PIPE")?;
-    let client = IpcHttpClient::new(&ipc_path).unwrap();
+
+    let client = IpcHttpClient::new(&ipc_path)?;
     let response = client.request("GET", "/proxies", None).await?;
     println!("{:?}", response);
     println!("{}", response.json()?);

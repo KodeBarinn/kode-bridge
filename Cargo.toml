@@ -1,7 +1,7 @@
 [package]
 name = "kode-bridge"
 authors = ["Tunglies"]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "Cross-platform Rust library for sending HTTP requests over IPC channels (Unix sockets, planned Windows named pipes)."
 license = "Apache-2.0"
@@ -21,28 +21,15 @@ env = "1.0.1"
 criterion = {version = "0.6.0", features = ["async"]}
 
 [[example]]
-name = "unix_request"
-path = "examples/unix/request.rs"
+name = "request"
+path = "examples/request.rs"
 
 [[example]]
-name = "unix_request_large"
-path = "examples/unix/request_large.rs"
-
-[[example]]
-name = "windows_request"
-path = "examples/windows/request.rs"
-
-[[example]]
-name = "windows_request_large"
-path = "examples/windows/request_large.rs"
+name = "request_large"
+path = "examples/request_large.rs"
 
 [[bench]]
-name = "bench_version_unix"
-path = "benches/unix/bench_version.rs"
-harness = false
-
-[[bench]]
-name = "bench_version_windows"
-path = "benches/windows/bench_version.rs"
+name = "bench_version"
+path = "benches/bench_version.rs"
 harness = false
 

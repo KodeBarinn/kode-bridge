@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub async fn send_http_over_stream<S>(
+pub async fn http_request<S>(
     mut stream: S,
     method: &str,
     path: &str,

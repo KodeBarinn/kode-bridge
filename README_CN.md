@@ -4,24 +4,24 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0)
 [![Crates.io](https://img.shields.io/crates/v/kode-bridge.svg)](https://crates.io/crates/kode-bridge)
 
-**[中文](./README_CN.md) | English**
+**中文 | [English](./README.md)**
 
-**kode-bridge** is a modern Rust library designed for cross-platform (macOS, Linux, Windows) IPC HTTP communication. With a unified API, you can easily send HTTP requests via Unix Domain Sockets or Windows Named Pipes, just as simple as using a regular HTTP client.
+**kode-bridge** 是一个现代化的 Rust 库，专为跨平台（macOS、Linux、Windows）IPC HTTP 通信而设计。通过统一的 API，你可以轻松地通过 Unix Domain Sockets 或 Windows Named Pipes 发送 HTTP 请求，就像使用普通的 HTTP 客户端一样简单。
 
-## ✨ Features
+## ✨ 特点
 
-- **🌍 True Cross-Platform**: Automatically detects the platform and uses optimal IPC methods
+- **🌍 真正跨平台**：自动检测平台并使用最优的 IPC 方式
   - **Unix/Linux/macOS**: Unix Domain Sockets
   - **Windows**: Named Pipes
-- **🚀 Zero Configuration**: Unified `IpcHttpClient` API, no platform-specific code required
-- **📦 Auto Serialization**: Built-in JSON request and response handling
-- **⚡ High Performance**: Optimized connection management strategies for different platforms
-- **🔧 Easy Integration**: Based on [interprocess](https://github.com/kotauskas/interprocess) and Tokio async runtime
-- **📖 Complete Support**: Includes examples, benchmarks, and comprehensive documentation
+- **🚀 零配置使用**：统一的 `IpcHttpClient` API，无需平台特定代码
+- **📦 自动序列化**：内置 JSON 请求与响应处理
+- **⚡ 高性能**：针对不同平台优化的连接管理策略
+- **🔧 易于集成**：基于 [interprocess](https://github.com/kotauskas/interprocess) 和 Tokio 异步运行时
+- **📖 完整支持**：包含示例、基准测试和详细文档
 
-## 🚀 Quick Start
+## 🚀 快速开始
 
-### Add Dependencies
+### 添加依赖
 
 ```toml
 [dependencies]
@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
 ```
 
-### Basic Usage
+### 基本使用
 
 ```rust
 use kode_bridge::IpcHttpClient;
@@ -38,19 +38,19 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Automatically detect platform and use appropriate IPC path
+    // 自动检测平台并使用适当的 IPC 路径
     #[cfg(unix)]
     let client = IpcHttpClient::new("/tmp/my_service.sock")?;
     
     #[cfg(windows)]
     let client = IpcHttpClient::new(r"\\.\pipe\my_service")?;
     
-    // Send GET request
+    // 发送 GET 请求
     let response = client.request("GET", "/api/version", None).await?;
     println!("Status: {}", response.status);
     println!("Response: {}", response.body);
     
-    // Send POST request
+    // 发送 POST 请求
     let data = json!({"user": "alice", "action": "login"});
     let response = client.request("POST", "/api/auth", Some(&data)).await?;
     println!("Auth result: {}", response.json()?);
@@ -59,19 +59,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Using Environment Variables
+### 使用环境变量
 
-Create a `.env` file:
+创建 `.env` 文件：
 
 ```env
-# Unix systems
+# Unix 系统
 CUSTOM_SOCK=/tmp/my_app.sock
 
-# Windows systems (each backslash needs to be escaped by doubling)
+# Windows 系统（每个反斜杠都需双写进行转义）
 CUSTOM_PIPE=\\\\.\\pipe\\\my_app
 ```
 
-Then in your code:
+然后在代码中：
 
 ```rust
 use dotenv::dotenv;
@@ -94,40 +94,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## 📋 Examples
+## 📋 示例
 
-Run built-in examples:
+运行内置示例：
 
 ```bash
-# Basic request example
+# 基本请求示例
 cargo run --example request
 
-# Large data request example
+# 大数据请求示例
 cargo run --example request_large
 
-# Using custom IPC path
+# 使用自定义 IPC 路径
 CUSTOM_SOCK=/tmp/my.sock cargo run --example request  # Unix
 CUSTOM_PIPE=\\\\.\\pipe\\my_pipe cargo run --example request  # Windows
 ```
 
-## 🔥 Performance Benchmarks
+## 🔥 性能基准测试
 
-Run performance benchmarks:
+运行性能基准测试：
 
 ```bash
-# Run all benchmarks
+# 运行所有基准测试
 cargo bench
 
-# View benchmark reports
+# 查看基准测试报告
 open target/criterion/report/index.html
 ```
 
-Benchmarks automatically:
-- Detect the running platform
-- Use appropriate environment variables (`CUSTOM_SOCK` or `CUSTOM_PIPE`)
-- Apply platform-specific performance optimization strategies
+基准测试会自动：
+- 检测运行平台
+- 使用适当的环境变量（`CUSTOM_SOCK` 或 `CUSTOM_PIPE`）
+- 应用平台特定的性能优化策略
 
-## 🏗️ Architecture Design
+## 🏗️ 架构设计
 
 ```
 ┌─────────────────────────────────────────┐
@@ -145,22 +145,22 @@ Benchmarks automatically:
 └─────────────────┴───────────────────────┘
 ```
 
-### Core Components
+### 核心组件
 
-- **`IpcHttpClient`**: Unified client interface that automatically adapts to different platforms
-- **`http_client`**: Platform-agnostic HTTP protocol handling with chunked transfer encoding support
-- **Smart Platform Detection**: Compile-time automatic selection of optimal IPC implementation
+- **`IpcHttpClient`**: 统一的客户端接口，自动适配不同平台
+- **`http_client`**: 平台无关的 HTTP 协议处理，支持分块传输编码
+- **智能平台检测**: 编译时自动选择最优的 IPC 实现
 
-## 🎯 Use Cases
+## 🎯 适用场景
 
-- **Local Service Communication**: Communicate with local processes like Clash, Mihomo, proxy services, etc.
-- **Microservice Architecture**: High-performance inter-process HTTP communication
-- **System Integration**: Replace traditional REST API local calls
-- **Performance-Critical Applications**: Scenarios requiring low-latency local communication
+- **本地服务通信**: 与 Clash、Mihomo、代理服务等本地进程通信
+- **微服务架构**: 进程间高性能 HTTP 通信
+- **系统集成**: 替代传统的 REST API 本地调用
+- **性能敏感应用**: 需要低延迟本地通信的场景
 
-## 🛠️ Development
+## 🛠️ 开发
 
-### Build Project
+### 构建项目
 
 ```bash
 git clone https://github.com/KodeBarinn/kode-bridge.git
@@ -168,27 +168,27 @@ cd kode-bridge
 cargo build
 ```
 
-### Run Tests
+### 运行测试
 
 ```bash
 cargo test
 ```
 
-### Generate Documentation
+### 生成文档
 
 ```bash
 cargo doc --open
 ```
 
-## 📚 Resources
+## 📚 更多资源
 
-- [Platform Guide](./PLATFORM_GUIDE.md) - Detailed cross-platform usage guide
-- [Examples](./examples/) - Complete example code
-- [Benchmarks](./benches/) - Performance benchmarks
+- [Platform Guide](./PLATFORM_GUIDE.md) - 跨平台使用详细指南
+- [Examples](./examples/) - 完整示例代码
+- [Benchmarks](./benches/) - 性能基准测试
 
-## 🤝 Contributing
+## 🤝 贡献
 
-We welcome Issues and Pull Requests!
+欢迎提交 Issue 和 Pull Request!
 
 ## 📄 License
 
