@@ -1,7 +1,7 @@
 [package]
 name = "kode-bridge"
 authors = ["Tunglies"]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "Cross-platform Rust library for sending HTTP requests over IPC channels (Unix sockets, planned Windows named pipes)."
 license = "Apache-2.0"
