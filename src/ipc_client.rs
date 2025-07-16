@@ -5,8 +5,8 @@ use interprocess::local_socket::traits::tokio::Stream;
 use interprocess::local_socket::{GenericFilePath, Name, ToFsName};
 
 use crate::errors::AnyResult;
-use crate::types::Response;
 use crate::http_client::http_request;
+use crate::types::Response;
 
 /// Generic IPC HTTP client that works on both Unix and Windows platforms
 pub struct IpcHttpClient {
@@ -15,19 +15,16 @@ pub struct IpcHttpClient {
 
 impl IpcHttpClient {
     /// Create a new IPC HTTP client with the given socket/named pipe path
-    /// 
+    ///
     /// # Arguments
     /// * `path` - The path to the socket (Unix) or named pipe (Windows)
     pub fn new<P: AsRef<Path>>(path: P) -> AnyResult<Self> {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()?
-            .into_owned();
+        let name = path.as_ref().to_fs_name::<GenericFilePath>()?.into_owned();
         Ok(Self { name })
     }
 
     /// Send an HTTP request over the IPC connection
-    /// 
+    ///
     /// # Arguments
     /// * `method` - HTTP method (GET, POST, etc.)
     /// * `path` - Request path

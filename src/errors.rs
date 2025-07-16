@@ -15,6 +15,17 @@ pub trait AnyError: Error + Send + Sync + Debug + Display {
 /// Blanket implementation for all types that implement the required traits
 impl<T> AnyError for T where T: Error + Send + Sync + Debug + Display {}
 
+/// Implementation of AnyError::from for convenience
+impl dyn AnyError {
+    /// Create a boxed AnyError from any error type
+    pub fn from<E>(error: E) -> Box<dyn AnyError>
+    where
+        E: AnyError + 'static,
+    {
+        Box::new(error)
+    }
+}
+
 /// A result type that uses AnyError as the error type
 pub type AnyResult<T> = Result<T, Box<dyn AnyError>>;
 

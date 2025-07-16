@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::errors::{to_any_error, AnyResult};
+use crate::errors::{AnyError, AnyResult};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Response {
@@ -12,6 +12,6 @@ pub struct Response {
 
 impl Response {
     pub fn json(&self) -> AnyResult<Value> {
-        serde_json::from_str(&self.body).map_err(to_any_error)
+        serde_json::from_str(&self.body).map_err(|e| <dyn AnyError>::from(e))
     }
 }

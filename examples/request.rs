@@ -15,7 +15,7 @@
 /// ```env
 /// # Unix
 /// CUSTOM_SOCK=/tmp/custom.sock
-/// 
+///
 /// # Windows  
 /// CUSTOM_PIPE=\\.\pipe\my_pipe
 /// ```
