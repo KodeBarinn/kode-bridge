@@ -5,3 +5,5 @@ pub mod types;
 
 pub mod ipc_client;
 pub use ipc_client::IpcHttpClient;
+
+pub use errors::{AnyError, AnyResult};

@@ -25,7 +25,7 @@ use kode_bridge::errors::AnyError;
 use std::env;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn AnyError>> {
+async fn main() -> Result<(), AnyError> {
     dotenv().ok();
 
     // Use platform-appropriate environment variable
