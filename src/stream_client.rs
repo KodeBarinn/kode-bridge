@@ -1,5 +1,5 @@
 use crate::errors::AnyResult;
-use crate::types::Response;
+use crate::http_client::Response;
 use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -32,15 +32,11 @@ where
     };
 
     #[cfg(unix)]
-    let mut request = format!(
-        "{} {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n",
-        method, path
-    );
+    let mut request =
+        format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
     #[cfg(windows)]
-    let mut request = format!(
-        "{} {} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n",
-        method, path
-    );
+    let mut request =
+        format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n");
 
     if let Some(ref b) = body_bytes {
         if body.is_some() {
@@ -87,10 +83,7 @@ where
 
     // Create a streaming response
     let line_stream = LinesStream::new(reader.lines());
-    let stream = Box::pin(
-        line_stream
-            .map(|result| result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))),
-    );
+    let stream = Box::pin(line_stream.map(|result| result.map_err(std::io::Error::other)));
 
     Ok(StreamingResponse {
         status,
@@ -100,10 +93,10 @@ where
 }
 
 impl StreamingResponse {
-    /// 优雅的 JSON 流处理 - 自动解析并过滤有效数据
+    /// Elegant JSON stream processing - automatically parse and filter valid data
     pub async fn json<T>(mut self, timeout: Duration) -> AnyResult<Vec<T>>
     where
-        T: serde::de::DeserializeOwned + Send + 'static,
+        T: serde::de::DeserializeOwned + Send,
     {
         let mut results = Vec::new();
         let timeout_future = tokio::time::sleep(timeout);
@@ -117,7 +110,7 @@ impl StreamingResponse {
                             if line.trim().is_empty() {
                                 continue;
                             }
-                            // 自动解析 JSON，失败则忽略
+                            // Auto-parse JSON, ignore failures
                             if let Ok(parsed) = serde_json::from_str::<T>(&line) {
                                 results.push(parsed);
                             }
@@ -133,7 +126,7 @@ impl StreamingResponse {
         Ok(results)
     }
 
-    /// 简化的流处理 - 处理 JSON 数据
+    /// Simplified stream processing - handle JSON data
     pub async fn process_json<F, T>(
         mut self,
         timeout: Duration,
@@ -167,10 +160,10 @@ impl StreamingResponse {
         Ok(results)
     }
 
-    /// 实时处理流数据
+    /// Process stream data in real-time
     pub async fn process_realtime<F>(mut self, timeout: Duration, mut handler: F) -> AnyResult<()>
     where
-        F: FnMut(&str) -> bool, // 返回 false 停止处理
+        F: FnMut(&str) -> bool, // Return false to stop processing
     {
         let timeout_future = tokio::time::sleep(timeout);
         tokio::pin!(timeout_future);

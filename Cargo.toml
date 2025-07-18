@@ -21,6 +21,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 dotenv = "0.15.0"
 env = "1.0.1"
 criterion = {version = "0.6.0", features = ["async"]}
+async-trait = "0.1.88"
 
 [[example]]
 name = "request"

@@ -35,8 +35,8 @@ async fn main() -> Result<(), AnyError> {
     let ipc_path = env::var("CUSTOM_PIPE")?;
 
     let client = IpcHttpClient::new(&ipc_path)?;
-    let response = client.request("GET", "/version", None).await?;
-    println!("{:?}", response);
-    println!("{}", response.json()?);
+    let response = client.get("/version").send().await?;
+    println!("{response:?}");
+    println!("{}", response.json_value()?);
     Ok(())
 }

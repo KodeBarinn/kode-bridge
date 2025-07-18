@@ -1,8 +1,22 @@
 use crate::errors::AnyResult;
-use crate::types::Response;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::io::{AsyncRead, AsyncWrite};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Response {
+    pub status: u16,
+    pub headers: serde_json::Value,
+    pub body: String,
+}
+
+impl Response {
+    pub fn json(&self) -> AnyResult<Value> {
+        serde_json::from_str(&self.body).map_err(Into::into)
+    }
+}
 
 pub async fn http_request<S>(
     mut stream: S,
@@ -20,15 +34,11 @@ where
     };
 
     #[cfg(unix)]
-    let mut request = format!(
-        "{} {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n",
-        method, path
-    );
+    let mut request =
+        format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
     #[cfg(windows)]
-    let mut request = format!(
-        "{} {} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n",
-        method, path
-    );
+    let mut request =
+        format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n");
 
     if let Some(ref b) = body_bytes {
         if body.is_some() {
@@ -97,14 +107,14 @@ where
             }
             let chunk_size = usize::from_str_radix(size_line, 16).unwrap_or(0);
             if chunk_size == 0 {
-                // 读完最后一个 chunk 后还有一个空行
+                // Read the empty line after the last chunk
                 let _ = reader.read_line(&mut String::new()).await;
                 break;
             }
             let mut chunk = vec![0u8; chunk_size];
             reader.read_exact(&mut chunk).await?;
             body.extend_from_slice(&chunk);
-            // 读掉 chunk 结尾的 \r\n
+            // Read the \r\n at the end of chunk
             let mut crlf = [0u8; 2];
             reader.read_exact(&mut crlf).await?;
         }

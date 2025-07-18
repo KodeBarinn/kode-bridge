@@ -22,11 +22,10 @@ use std::env;
 use tokio::runtime::Runtime;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use kode_bridge::IpcHttpClient;
-use kode_bridge::types::Response;
+use kode_bridge::{IpcHttpClient, Response};
 
 async fn bench_version_once(client: &IpcHttpClient) -> Response {
-    client.request("GET", "/version", None).await.unwrap()
+    client.get("/version").send().await.unwrap().into_inner()
 }
 
 fn get_ipc_path() -> String {

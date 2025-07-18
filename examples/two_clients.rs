@@ -1,5 +1,26 @@
+use async_trait::async_trait;
 use dotenv::dotenv;
 use kode_bridge::{AnyResult, IpcHttpClient, IpcStreamClient};
+
+// Traffic data structure
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct TrafficData {
+    pub up: u64,
+    pub down: u64,
+}
+
+// Extension trait
+#[async_trait]
+pub trait MyStreamClientExt {
+    async fn monitor_traffic(&self, timeout: Duration) -> AnyResult<Vec<TrafficData>>;
+}
+
+#[async_trait]
+impl MyStreamClientExt for IpcStreamClient {
+    async fn monitor_traffic(&self, timeout: Duration) -> AnyResult<Vec<TrafficData>> {
+        self.get_json_stream("/traffic", timeout).await
+    }
+}
 use std::time::Duration;
 
 #[tokio::main]
@@ -12,17 +33,24 @@ async fn main() -> AnyResult<()> {
     let ipc_path = env::var("CUSTOM_SOCK")?;
     #[cfg(windows)]
     let ipc_path = env::var("CUSTOM_PIPE")?;
-    // 1. 普通 HTTP 客户端 - 用于请求/响应
+    // 1. Regular HTTP client - for request/response
     println!("🔧 Testing IpcHttpClient (Request/Response)");
     let http_client = IpcHttpClient::new(&ipc_path)?;
 
-    // 获取基本信息
-    let proxies = http_client.get("/proxies").await?;
-    println!("✅ Status: {}", proxies.status);
-    println!("📄 Response length: {} chars", proxies.body.len());
+    // Get basic information - using new elegant API
+    let response = http_client
+        .get("/proxies")
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await?;
 
-    // 解析 JSON 响应
-    if let Ok(json_data) = proxies.json() {
+    println!("✅ Status: {}", response.status());
+    println!("📄 Response length: {} bytes", response.content_length());
+    println!("✨ Is success: {}", response.is_success());
+
+    // Parse JSON response
+    if response.is_success() {
+        let json_data = response.json_value()?;
         if let Some(proxies_obj) = json_data.as_object() {
             println!("🔍 Found {} proxy groups", proxies_obj.len());
         }
@@ -30,15 +58,17 @@ async fn main() -> AnyResult<()> {
 
     println!("\n🌊 Testing IpcStreamClient (Streaming)");
     let stream_client = IpcStreamClient::new(&ipc_path)?;
-    // 流式监控
-    let traffic_data = stream_client
-        .monitor_traffic(Duration::from_secs(6))
+
+    // Stream monitoring - using new elegant API
+    let traffic_data: Vec<TrafficData> = stream_client
+        .get("/traffic")
+        .timeout(Duration::from_secs(6))
+        .json_results()
         .await?;
 
     println!("✅ Collected {} traffic samples", traffic_data.len());
 
-    if !traffic_data.is_empty() {
-        let latest = &traffic_data[traffic_data.len() - 1];
+    if let Some(latest) = traffic_data.last() {
         println!(
             "📊 Latest: ⬆️ {} ⬇️ {}",
             format_bytes(latest.up),

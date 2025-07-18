@@ -1,6 +1,41 @@
+use async_trait::async_trait;
 use dotenv::dotenv;
-use kode_bridge::{AnyResult, IpcStreamClient, TrafficData};
+use kode_bridge::{AnyResult, IpcStreamClient};
 use std::time::Duration;
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct TrafficData {
+    pub up: u64,
+    pub down: u64,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct ConnectionData {
+    pub id: String,
+    pub metadata: serde_json::Value,
+    pub upload: u64,
+    pub download: u64,
+    pub start: String,
+    pub chains: Vec<String>,
+    pub rule: String,
+    pub rule_payload: String,
+}
+
+#[async_trait]
+pub trait MyStreamClientExt {
+    async fn monitor_traffic(&self, timeout: Duration) -> AnyResult<Vec<TrafficData>>;
+    async fn monitor_connections(&self, timeout: Duration) -> AnyResult<Vec<ConnectionData>>;
+}
+
+#[async_trait]
+impl MyStreamClientExt for IpcStreamClient {
+    async fn monitor_traffic(&self, timeout: Duration) -> AnyResult<Vec<TrafficData>> {
+        self.get_json_stream("/traffic", timeout).await
+    }
+    async fn monitor_connections(&self, timeout: Duration) -> AnyResult<Vec<ConnectionData>> {
+        self.get_json_stream("/connections", timeout).await
+    }
+}
 
 #[tokio::main]
 async fn main() -> AnyResult<()> {
@@ -16,17 +51,15 @@ async fn main() -> AnyResult<()> {
 
     println!("📊 Method 1: Direct traffic monitoring");
 
-    // 🎯 超级简洁！专门的流量监控方法
     let traffic_data = stream_client
         .monitor_traffic(Duration::from_secs(8))
         .await?;
 
-    // 分析数据
     let total_samples = traffic_data.len();
     let total_up: u64 = traffic_data.iter().map(|t| t.up).sum();
     let total_down: u64 = traffic_data.iter().map(|t| t.down).sum();
 
-    println!("✅ Collected {} traffic samples", total_samples);
+    println!("✅ Collected {total_samples} traffic samples");
     println!("📤 Total upload: {}", format_bytes(total_up));
     println!("📥 Total download: {}", format_bytes(total_down));
 
@@ -42,7 +75,6 @@ async fn main() -> AnyResult<()> {
 
     println!("\n📊 Method 2: Real-time stream processing");
 
-    // 实时处理演示
     let mut sample_count = 0;
     let mut total_processed = 0u64;
 
@@ -65,7 +97,7 @@ async fn main() -> AnyResult<()> {
                 }
             }
 
-            true // 继续处理
+            true
         })
         .await?;
 
