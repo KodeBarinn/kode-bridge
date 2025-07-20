@@ -13,9 +13,9 @@
 - **🌍 True Cross-Platform**: Automatically detects the platform and uses optimal IPC methods
   - **Unix/Linux/macOS**: Unix Domain Sockets
   - **Windows**: Named Pipes
-- **🚀 Dual Client Architecture**: 
-  - **`IpcHttpClient`**: HTTP-style request/response for API calls
-  - **`IpcStreamClient`**: Real-time streaming for continuous data monitoring
+- **🚀 Complete Client/Server Architecture**: 
+  - **Client**: `IpcHttpClient` (HTTP-style request/response) + `IpcStreamClient` (real-time streaming)
+  - **Server**: `IpcHttpServer` (HTTP routing service) + `IpcStreamServer` (streaming broadcast service)
 - **💎 Fluent API**: Reqwest-inspired method chaining with type-safe JSON handling
 - **📦 Auto Serialization**: Built-in JSON request and response processing
 - **⚡ High Performance**: Optimized connection management strategies for different platforms
@@ -256,6 +256,12 @@ cargo run --example two_clients
 # Real-time traffic monitoring
 cargo run --example traffic
 
+# HTTP server examples (requires server feature)
+cargo run --example http_server --features server
+
+# Streaming server examples (requires server feature)
+cargo run --example stream_server --features server
+
 # Using custom IPC path
 CUSTOM_SOCK=/tmp/my.sock cargo run --example request  # Unix
 CUSTOM_PIPE=\\\\.\\pipe\\my_pipe cargo run --example request  # Windows
@@ -281,31 +287,42 @@ Benchmarks automatically:
 ## 🏗️ Architecture Design
 
 ```
-┌─────────────────────────────────────────┐
-│     IpcHttpClient    IpcStreamClient    │
-│   (Request/Response)  (Real-time Stream)│
-├─────────────────────────────────────────┤
-│              Fluent API                 │
-│   (HTTP-like Methods & Method Chaining) │
-├─────────────────────────────────────────┤
-│            http_client.rs               │
-│        (HTTP Protocol Handler)          │
-├─────────────────────────────────────────┤
-│             interprocess                │
-│       (Cross-Platform IPC Transport)    │
-├─────────────────┬───────────────────────┤
-│   Unix Sockets  │    Windows Pipes      │
-│   (Unix/Linux)  │     (Windows)         │
-└─────────────────┴───────────────────────┘
+┌─────────────────────────────────────────┬─────────────────────────┐
+│              CLIENT SIDE                │     SERVER SIDE         │
+├─────────────────────────────────────────┼─────────────────────────┤
+│  IpcHttpClient   │  IpcStreamClient     │ IpcHttpServer │ IpcStreamServer │
+│ (HTTP Req/Res)   │  (Real-time Stream)  │ (HTTP Routing)│ (Stream Broadcast)  │
+├─────────────────────────────────────────┼─────────────────────────┤
+│              Fluent API                 │    Routing System       │
+│   (HTTP-like Methods & Method Chaining) │ (Request Handling & Response) │
+├─────────────────────────────────────────┼─────────────────────────┤
+│            http_client.rs               │   http_server.rs        │
+│        (HTTP Protocol Handler)          │  (HTTP Protocol Server) │
+├─────────────────────────────────────────┴─────────────────────────┤
+│                    interprocess                              │
+│                (Cross-Platform IPC Transport)                    │
+├─────────────────┬───────────────────────┬─────────────────────────┤
+│   Unix Sockets  │    Windows Pipes      │   Feature Flags         │
+│   (Unix/Linux)  │     (Windows)         │ (client/server/full)    │
+└─────────────────┴───────────────────────┴─────────────────────────┘
 ```
 
 ### Core Components
 
+#### Client Components
 - **`IpcHttpClient`**: HTTP-style request/response client with fluent API
 - **`IpcStreamClient`**: Real-time streaming client for continuous data monitoring
 - **Fluent API**: Method chaining with `get()`, `post()`, `timeout()`, `json_body()`, `send()`, etc.
-- **`http_client`**: Platform-agnostic HTTP protocol handling with chunked transfer encoding support
+
+#### Server Components
+- **`IpcHttpServer`**: HTTP server with routing system and middleware support
+- **`IpcStreamServer`**: Real-time streaming server with broadcast and multi-client management
+- **Routing System**: Express.js-like routing patterns with path parameters and query parameter support
+
+#### Shared Components
+- **`http_client/server`**: Platform-agnostic HTTP protocol handling with chunked transfer encoding support
 - **Smart Platform Detection**: Compile-time automatic selection of optimal IPC implementation
+- **Feature Flags**: Flexible compile-time functionality selection
 
 ### API Comparison
 
@@ -352,7 +369,8 @@ cargo doc --open
 ## 📚 Resources
 
 - [Platform Guide](./PLATFORM_GUIDE.md) - Detailed cross-platform usage guide
-- [Examples](./examples/) - Complete example code
+- [Server Guide](./SERVER_GUIDE.md) - Complete server development guide
+- [Examples](./examples/) - Complete example code (client and server)
 - [Benchmarks](./benches/) - Performance benchmarks
 
 ## 🤝 Contributing
