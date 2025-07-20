@@ -35,22 +35,22 @@ async fn main() -> Result<()> {
     let ipc_path = env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\example".to_string());
 
     println!("📡 Connecting to: {}", ipc_path);
-    
+
     // Create client with modern API
     let client = IpcHttpClient::new(&ipc_path)?;
-    
+
     // Use the new fluent API with timeout
     let response = client
         .get("/version")
         .timeout(Duration::from_secs(10))
         .send()
         .await?;
-    
+
     println!("🔍 Response Details:");
     println!("  Status: {}", response.status());
     println!("  Success: {}", response.is_success());
     println!("  Content Length: {}", response.content_length());
-    
+
     // Parse and display JSON response
     match response.json_value() {
         Ok(json) => println!("📄 JSON Response: {:#}", json),
@@ -59,11 +59,11 @@ async fn main() -> Result<()> {
             println!("⚠️  JSON parse error: {}", e);
         }
     }
-    
+
     // Show pool stats if available
     if let Some(stats) = client.pool_stats() {
         println!("📊 Pool Stats: {}", stats);
     }
-    
+
     Ok(())
 }

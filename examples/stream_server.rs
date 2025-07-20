@@ -3,9 +3,7 @@
 //! This example demonstrates how to create a streaming IPC server that
 //! broadcasts real-time data to multiple connected clients.
 
-use kode_bridge::{
-    IpcStreamServer, StreamMessage, StreamServerConfig, JsonDataSource, Result
-};
+use kode_bridge::{IpcStreamServer, JsonDataSource, Result, StreamMessage, StreamServerConfig};
 use serde_json::json;
 use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -43,14 +41,14 @@ fn generate_traffic_data() -> Result<serde_json::Value> {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     let traffic = TrafficData {
         timestamp,
-        up: rand::random::<u64>() % 1000000,   // Random upload bytes
+        up: rand::random::<u64>() % 1000000, // Random upload bytes
         down: rand::random::<u64>() % 5000000, // Random download bytes
         connections: rand::random::<u32>() % 100 + 10, // 10-110 connections
     };
-    
+
     Ok(serde_json::to_value(traffic)?)
 }
 
@@ -59,16 +57,16 @@ fn generate_system_metrics() -> Result<serde_json::Value> {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     let metrics = SystemMetrics {
         timestamp,
-        cpu_usage: (rand::random::<f64>() * 100.0).round() / 100.0,  // 0-100%
+        cpu_usage: (rand::random::<f64>() * 100.0).round() / 100.0, // 0-100%
         memory_usage: (rand::random::<f64>() * 100.0).round() / 100.0, // 0-100%
-        disk_usage: (rand::random::<f64>() * 100.0).round() / 100.0,   // 0-100%
+        disk_usage: (rand::random::<f64>() * 100.0).round() / 100.0, // 0-100%
         network_rx: rand::random::<u64>() % 1000000,
         network_tx: rand::random::<u64>() % 1000000,
     };
-    
+
     Ok(serde_json::to_value(metrics)?)
 }
 
@@ -77,7 +75,7 @@ fn generate_event_log() -> Result<serde_json::Value> {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     let events = vec![
         ("INFO", "User logged in successfully", "auth"),
         ("WARN", "High memory usage detected", "system"),
@@ -87,16 +85,16 @@ fn generate_event_log() -> Result<serde_json::Value> {
         ("INFO", "New client connected", "network"),
         ("WARN", "Rate limit exceeded", "api"),
     ];
-    
+
     let (level, message, source) = events[rand::random::<usize>() % events.len()];
-    
+
     let event = EventLog {
         timestamp,
         level: level.to_string(),
         message: message.to_string(),
         source: source.to_string(),
     };
-    
+
     Ok(serde_json::to_value(event)?)
 }
 
@@ -109,9 +107,11 @@ async fn main() -> Result<()> {
 
     // Get IPC path from environment or use default
     #[cfg(unix)]
-    let ipc_path = env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/stream_server.sock".to_string());
+    let ipc_path =
+        env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/stream_server.sock".to_string());
     #[cfg(windows)]
-    let ipc_path = env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\stream_server".to_string());
+    let ipc_path =
+        env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\stream_server".to_string());
 
     println!("📡 Server will listen on: {}", ipc_path);
 
@@ -145,15 +145,20 @@ async fn main() -> Result<()> {
         // Get a clone of the broadcast functionality
         // Note: In real implementation, you'd get the broadcast sender from the server
         println!("📈 Starting additional data generators...");
-        
+
         // Simulate system metrics broadcast
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             loop {
                 interval.tick().await;
                 if let Ok(metrics) = generate_system_metrics() {
-                    info!("Generated system metrics: CPU {:.1}%", 
-                          metrics.get("cpu_usage").and_then(|v| v.as_f64()).unwrap_or(0.0));
+                    info!(
+                        "Generated system metrics: CPU {:.1}%",
+                        metrics
+                            .get("cpu_usage")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0)
+                    );
                     // In real implementation: server.broadcast(StreamMessage::Json(metrics))?;
                 }
             }
@@ -166,9 +171,17 @@ async fn main() -> Result<()> {
         loop {
             interval.tick().await;
             if let Ok(event) = generate_event_log() {
-                info!("Generated event: {} - {}", 
-                      event.get("level").and_then(|v| v.as_str()).unwrap_or("UNKNOWN"),
-                      event.get("message").and_then(|v| v.as_str()).unwrap_or("No message"));
+                info!(
+                    "Generated event: {} - {}",
+                    event
+                        .get("level")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("UNKNOWN"),
+                    event
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("No message")
+                );
                 // In real implementation: server.broadcast(StreamMessage::Json(event))?;
             }
         }
@@ -192,7 +205,10 @@ async fn main() -> Result<()> {
     println!("📱 Client connection info:");
     #[cfg(unix)]
     {
-        println!("CUSTOM_SOCK={} cargo run --features=client --example elegant_stream", ipc_path);
+        println!(
+            "CUSTOM_SOCK={} cargo run --features=client --example elegant_stream",
+            ipc_path
+        );
     }
     #[cfg(windows)]
     {
@@ -207,13 +223,16 @@ async fn main() -> Result<()> {
         loop {
             interval.tick().await;
             // In real implementation, get stats from server
-            info!("📊 Server stats: {} connections, broadcasting data streams", 0);
+            info!(
+                "📊 Server stats: {} connections, broadcasting data streams",
+                0
+            );
         }
     });
 
     // Wait for shutdown signal
     println!("🎯 Server is running. Press Ctrl+C to shutdown...");
-    
+
     match signal::ctrl_c().await {
         Ok(()) => {
             println!("🛑 Shutdown signal received");
@@ -229,12 +248,12 @@ async fn main() -> Result<()> {
     server_broadcast.abort();
     event_generator.abort();
     stats_task.abort();
-    
+
     // Give some time for cleanup
     tokio::time::sleep(Duration::from_millis(500)).await;
-    
+
     println!("✅ Server stopped");
-    
+
     Ok(())
 }
 
@@ -247,7 +266,7 @@ async fn manual_broadcast_example() -> Result<()> {
         "message": "Manual broadcast message",
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
-    
+
     // server.broadcast(StreamMessage::Json(data))?;
     info!("Manual broadcast sent");
     Ok(())

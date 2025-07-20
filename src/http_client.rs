@@ -1,7 +1,7 @@
 use crate::errors::{KodeBridgeError, Result};
 use bytes::{Bytes, BytesMut};
-use http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
-use serde::{de::DeserializeOwned, Serialize};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -135,7 +135,10 @@ impl RequestBuilder {
     pub fn new(method: Method, uri: String) -> Self {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, HeaderValue::from_static("localhost"));
-        headers.insert(header::USER_AGENT, HeaderValue::from_static("kode-bridge/0.1"));
+        headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("kode-bridge/0.1"),
+        );
 
         Self {
             method,
@@ -254,9 +257,9 @@ where
         if n == 0 {
             return Err(KodeBridgeError::protocol("Unexpected end of stream"));
         }
-        
+
         buffer.extend_from_slice(&line);
-        
+
         // Check for end of headers (\r\n\r\n)
         if buffer.len() >= 4 {
             for i in 0..buffer.len() - 3 {
@@ -266,20 +269,19 @@ where
                 }
             }
         }
-        
+
         if headers_end.is_some() {
             break;
         }
     }
 
-    let headers_end = headers_end.ok_or_else(|| {
-        KodeBridgeError::protocol("Could not find end of HTTP headers")
-    })?;
+    let headers_end = headers_end
+        .ok_or_else(|| KodeBridgeError::protocol("Could not find end of HTTP headers"))?;
 
     // Parse the headers
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut response = httparse::Response::new(&mut headers);
-    
+
     let status = match response.parse(&buffer[..headers_end])? {
         httparse::Status::Complete(_) => response.code.unwrap(),
         httparse::Status::Partial => {
@@ -290,10 +292,10 @@ where
     // Build HeaderMap
     let mut header_map = HeaderMap::new();
     for header in response.headers {
-        let name = HeaderName::from_str(header.name)
-            .map_err(|e| KodeBridgeError::Http(e.into()))?;
-        let value = HeaderValue::from_bytes(header.value)
-            .map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let name =
+            HeaderName::from_str(header.name).map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let value =
+            HeaderValue::from_bytes(header.value).map_err(|e| KodeBridgeError::Http(e.into()))?;
         header_map.insert(name, value);
     }
 
@@ -334,38 +336,38 @@ where
     R: AsyncRead + Unpin,
 {
     let mut body = BytesMut::new();
-    
+
     loop {
         // Read chunk size line
         let mut size_line = String::new();
         reader.read_line(&mut size_line).await?;
-        
+
         let size_line = size_line.trim();
         if size_line.is_empty() {
             continue;
         }
-        
+
         // Parse chunk size (hex)
         let chunk_size = usize::from_str_radix(size_line, 16)
             .map_err(|_| KodeBridgeError::protocol("Invalid chunk size"))?;
-        
+
         if chunk_size == 0 {
             // Last chunk, read final CRLF
             let mut final_line = String::new();
             reader.read_line(&mut final_line).await?;
             break;
         }
-        
+
         // Read chunk data
         let mut chunk = vec![0u8; chunk_size];
         reader.read_exact(&mut chunk).await?;
         body.extend_from_slice(&chunk);
-        
+
         // Read trailing CRLF
         let mut crlf = [0u8; 2];
         reader.read_exact(&mut crlf).await?;
     }
-    
+
     Ok(body.freeze())
 }
 
@@ -386,18 +388,18 @@ where
     // Send request
     stream.write_all(&request).await?;
     stream.flush().await?;
-    
+
     trace!("Sent HTTP request ({} bytes)", request.len());
-    
+
     // Parse response
     let response = parse_response(stream).await?;
-    
+
     debug!(
         "Received HTTP response: {} {}",
         response.status(),
         response.content_length().unwrap_or(0)
     );
-    
+
     Ok(response)
 }
 
@@ -412,15 +414,14 @@ pub async fn http_request<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let method = Method::from_str(method)
-        .map_err(|e| KodeBridgeError::Http(e.into()))?;
-    
+    let method = Method::from_str(method).map_err(|e| KodeBridgeError::Http(e.into()))?;
+
     let mut builder = RequestBuilder::new(method, path.to_string());
-    
+
     if let Some(json_body) = body {
         builder = builder.json(json_body)?;
     }
-    
+
     let request = builder.build()?;
     send_request(stream, request).await
 }

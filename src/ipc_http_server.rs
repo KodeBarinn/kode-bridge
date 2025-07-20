@@ -7,9 +7,8 @@ use crate::errors::{KodeBridgeError, Result};
 use bytes::Bytes;
 use http::{HeaderMap, Method, StatusCode, Uri};
 use interprocess::local_socket::{
-    tokio::prelude::LocalSocketStream,
+    GenericFilePath, ListenerOptions, Name, ToFsName, tokio::prelude::LocalSocketStream,
     traits::tokio::Listener,
-    GenericFilePath, Name, ToFsName, ListenerOptions,
 };
 use parking_lot::RwLock;
 use std::{
@@ -81,14 +80,16 @@ impl RequestContext {
     where
         T: serde::de::DeserializeOwned,
     {
-        serde_json::from_slice(&self.body)
-            .map_err(|e| KodeBridgeError::json_parse(format!("Failed to parse request JSON: {}", e)))
+        serde_json::from_slice(&self.body).map_err(|e| {
+            KodeBridgeError::json_parse(format!("Failed to parse request JSON: {}", e))
+        })
     }
 
     /// Get request body as UTF-8 string
     pub fn text(&self) -> Result<String> {
-        String::from_utf8(self.body.to_vec())
-            .map_err(|e| KodeBridgeError::validation(format!("Invalid UTF-8 in request body: {}", e)))
+        String::from_utf8(self.body.to_vec()).map_err(|e| {
+            KodeBridgeError::validation(format!("Invalid UTF-8 in request body: {}", e))
+        })
     }
 
     /// Get query parameters from URI
@@ -103,10 +104,9 @@ impl RequestContext {
                             urlencoding::decode(key).ok()?.to_string(),
                             urlencoding::decode(value).ok()?.to_string(),
                         )),
-                        (Some(key), None) => Some((
-                            urlencoding::decode(key).ok()?.to_string(),
-                            String::new(),
-                        )),
+                        (Some(key), None) => {
+                            Some((urlencoding::decode(key).ok()?.to_string(), String::new()))
+                        }
                         _ => None,
                     }
                 })
@@ -185,9 +185,10 @@ impl ResponseBuilder {
 
     /// Set response body from JSON
     pub fn json<T: serde::Serialize>(self, value: &T) -> Result<Self> {
-        let json_bytes = serde_json::to_vec(value)
-            .map_err(|e| KodeBridgeError::json_serialize(format!("Failed to serialize JSON: {}", e)))?;
-        
+        let json_bytes = serde_json::to_vec(value).map_err(|e| {
+            KodeBridgeError::json_serialize(format!("Failed to serialize JSON: {}", e))
+        })?;
+
         Ok(self
             .header("content-type", "application/json")
             .body(json_bytes))
@@ -240,10 +241,7 @@ impl HttpResponse {
 
     /// Create an error response
     pub fn error(status: StatusCode, message: &str) -> Self {
-        ResponseBuilder::new()
-            .status(status)
-            .text(message)
-            .build()
+        ResponseBuilder::new().status(status).text(message).build()
     }
 
     /// Create a 404 Not Found response
@@ -259,7 +257,9 @@ impl HttpResponse {
 
 /// Request handler function type
 pub type HandlerFn = Box<
-    dyn Fn(RequestContext) -> Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>> + Send + Sync,
+    dyn Fn(RequestContext) -> Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>>
+        + Send
+        + Sync,
 >;
 
 /// Route definition for the HTTP server
@@ -277,9 +277,7 @@ pub struct Router {
 impl Router {
     /// Create a new router
     pub fn new() -> Self {
-        Self {
-            routes: Vec::new(),
-        }
+        Self { routes: Vec::new() }
     }
 
     /// Add a GET route
@@ -325,21 +323,21 @@ impl Router {
         Fut: Future<Output = Result<HttpResponse>> + Send + 'static,
     {
         let handler_fn: HandlerFn = Box::new(move |ctx| Box::pin(handler(ctx)));
-        
+
         self.routes.push(Route {
             method,
             path: path.to_string(),
             handler: Arc::new(handler_fn),
         });
-        
+
         self
     }
 
     /// Find a matching route for the given method and path
     fn find_route(&self, method: &Method, path: &str) -> Option<&Route> {
-        self.routes.iter().find(|route| {
-            route.method == *method && self.path_matches(&route.path, path)
-        })
+        self.routes
+            .iter()
+            .find(|route| route.method == *method && self.path_matches(&route.path, path))
     }
 
     /// Check if a route path matches the request path
@@ -538,7 +536,9 @@ impl IpcHttpServer {
 
         // Wait for active connections to finish
         let start = Instant::now();
-        while self.stats.read().active_connections > 0 && start.elapsed() < self.config.shutdown_timeout {
+        while self.stats.read().active_connections > 0
+            && start.elapsed() < self.config.shutdown_timeout
+        {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
@@ -575,33 +575,38 @@ impl IpcHttpServer {
 
         loop {
             // Read HTTP request with timeout
-            let request_data = match timeout(config.read_timeout, Self::read_request(&mut stream)).await {
-                Ok(Ok(Some(data))) => data,
-                Ok(Ok(None)) => {
-                    debug!("Connection {} closed by client", connection_id);
-                    break;
-                }
-                Ok(Err(e)) => {
-                    error!("Failed to read request from connection {}: {}", connection_id, e);
-                    return Err(e);
-                }
-                Err(_) => {
-                    warn!("Read timeout on connection {}", connection_id);
-                    return Err(KodeBridgeError::timeout_msg("Request read timeout"));
-                }
-            };
+            let request_data =
+                match timeout(config.read_timeout, Self::read_request(&mut stream)).await {
+                    Ok(Ok(Some(data))) => data,
+                    Ok(Ok(None)) => {
+                        debug!("Connection {} closed by client", connection_id);
+                        break;
+                    }
+                    Ok(Err(e)) => {
+                        error!(
+                            "Failed to read request from connection {}: {}",
+                            connection_id, e
+                        );
+                        return Err(e);
+                    }
+                    Err(_) => {
+                        warn!("Read timeout on connection {}", connection_id);
+                        return Err(KodeBridgeError::timeout_msg("Request read timeout"));
+                    }
+                };
 
             // Parse HTTP request
-            let request_context = match Self::parse_request(request_data, &client_info, config.max_request_size) {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    error!("Failed to parse request: {}", e);
-                    let response = HttpResponse::error(StatusCode::BAD_REQUEST, "Bad Request");
-                    Self::write_response(&mut stream, &response, &config).await?;
-                    stats.write().total_errors += 1;
-                    continue;
-                }
-            };
+            let request_context =
+                match Self::parse_request(request_data, &client_info, config.max_request_size) {
+                    Ok(ctx) => ctx,
+                    Err(e) => {
+                        error!("Failed to parse request: {}", e);
+                        let response = HttpResponse::error(StatusCode::BAD_REQUEST, "Bad Request");
+                        Self::write_response(&mut stream, &response, &config).await?;
+                        stats.write().total_errors += 1;
+                        continue;
+                    }
+                };
 
             {
                 let mut stats = stats.write();
@@ -609,15 +614,20 @@ impl IpcHttpServer {
             }
 
             if config.enable_logging {
-                info!("👤 {} {} {}", request_context.method, request_context.uri, connection_id);
+                info!(
+                    "👤 {} {} {}",
+                    request_context.method, request_context.uri, connection_id
+                );
             }
 
             // Clone the method and URI for logging
             let method = request_context.method.clone();
             let uri = request_context.uri.clone();
-            
+
             // Find and execute handler
-            let response = if let Some(route) = router.find_route(&request_context.method, request_context.uri.path()) {
+            let response = if let Some(route) =
+                router.find_route(&request_context.method, request_context.uri.path())
+            {
                 match timeout(config.write_timeout, (route.handler)(request_context)).await {
                     Ok(Ok(response)) => response,
                     Ok(Err(e)) => {
@@ -673,16 +683,16 @@ impl IpcHttpServer {
                 }
                 Ok(n) => {
                     total_data.extend_from_slice(&buffer[..n]);
-                    
+
                     // Check for end of HTTP headers (double CRLF)
                     if let Some(header_end) = Self::find_header_end(&total_data) {
                         // We have complete headers, now check if we need to read body
                         let headers_str = String::from_utf8_lossy(&total_data[..header_end]);
-                        
+
                         if let Some(content_length) = Self::extract_content_length(&headers_str) {
                             let body_start = header_end + 4; // Skip the \r\n\r\n
                             let total_expected = body_start + content_length;
-                            
+
                             // Read remaining body if needed
                             while total_data.len() < total_expected {
                                 match stream.read(&mut buffer).await {
@@ -710,7 +720,10 @@ impl IpcHttpServer {
     /// Extract Content-Length from headers
     fn extract_content_length(headers: &str) -> Option<usize> {
         for line in headers.lines() {
-            if let Some(value) = line.strip_prefix("Content-Length:").or_else(|| line.strip_prefix("content-length:")) {
+            if let Some(value) = line
+                .strip_prefix("Content-Length:")
+                .or_else(|| line.strip_prefix("content-length:"))
+            {
                 if let Ok(length) = value.trim().parse::<usize>() {
                     return Some(length);
                 }
@@ -720,14 +733,19 @@ impl IpcHttpServer {
     }
 
     /// Parse raw HTTP request data into RequestContext
-    fn parse_request(data: Vec<u8>, client_info: &ClientInfo, max_size: usize) -> Result<RequestContext> {
+    fn parse_request(
+        data: Vec<u8>,
+        client_info: &ClientInfo,
+        max_size: usize,
+    ) -> Result<RequestContext> {
         if data.len() > max_size {
             return Err(KodeBridgeError::validation("Request too large"));
         }
 
         // Split headers and body
-        let header_end = Self::find_header_end(&data)
-            .ok_or_else(|| KodeBridgeError::validation("Invalid HTTP request: no header end found"))?;
+        let header_end = Self::find_header_end(&data).ok_or_else(|| {
+            KodeBridgeError::validation("Invalid HTTP request: no header end found")
+        })?;
 
         let headers_data = &data[..header_end];
         let body_data = if data.len() > header_end + 4 {
@@ -739,14 +757,17 @@ impl IpcHttpServer {
         // Parse request line and headers
         let headers_str = String::from_utf8_lossy(headers_data);
         let mut lines = headers_str.lines();
-        
-        let request_line = lines.next()
+
+        let request_line = lines
+            .next()
             .ok_or_else(|| KodeBridgeError::validation("Invalid HTTP request: no request line"))?;
 
         let mut parts = request_line.split_whitespace();
-        let method = parts.next()
+        let method = parts
+            .next()
             .ok_or_else(|| KodeBridgeError::validation("Invalid HTTP request: no method"))?;
-        let uri = parts.next()
+        let uri = parts
+            .next()
             .ok_or_else(|| KodeBridgeError::validation("Invalid HTTP request: no URI"))?;
 
         // Parse method
@@ -754,7 +775,8 @@ impl IpcHttpServer {
             .map_err(|e| KodeBridgeError::validation(format!("Invalid HTTP method: {}", e)))?;
 
         // Parse URI
-        let uri = uri.parse::<Uri>()
+        let uri = uri
+            .parse::<Uri>()
             .map_err(|e| KodeBridgeError::validation(format!("Invalid URI: {}", e)))?;
 
         // Parse headers
@@ -763,7 +785,7 @@ impl IpcHttpServer {
             if let Some((key, value)) = line.split_once(':') {
                 let key = key.trim();
                 let value = value.trim();
-                
+
                 if let (Ok(header_name), Ok(header_value)) = (
                     key.parse::<http::header::HeaderName>(),
                     value.parse::<http::header::HeaderValue>(),
@@ -794,8 +816,11 @@ impl IpcHttpServer {
     ) -> Result<()> {
         timeout(config.write_timeout, async {
             // Write status line
-            let status_line = format!("HTTP/1.1 {} {}\r\n", response.status.as_u16(), 
-                response.status.canonical_reason().unwrap_or("Unknown"));
+            let status_line = format!(
+                "HTTP/1.1 {} {}\r\n",
+                response.status.as_u16(),
+                response.status.canonical_reason().unwrap_or("Unknown")
+            );
             stream.write_all(status_line.as_bytes()).await?;
 
             // Write headers
@@ -843,7 +868,7 @@ mod urlencoding {
         if input.contains('%') {
             let mut result = String::new();
             let mut chars = input.chars();
-            
+
             while let Some(ch) = chars.next() {
                 if ch == '%' {
                     let hex: String = chars.by_ref().take(2).collect();

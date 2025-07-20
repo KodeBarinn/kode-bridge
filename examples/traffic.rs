@@ -1,5 +1,5 @@
 use dotenv::dotenv;
-use kode_bridge::{Result, IpcStreamClient, StreamClientConfig};
+use kode_bridge::{IpcStreamClient, Result, StreamClientConfig};
 use std::env;
 use std::time::Duration;
 
@@ -23,18 +23,21 @@ pub struct ConnectionData {
 
 /// Extension trait for convenient traffic monitoring
 pub trait TrafficMonitorExt {
-    fn monitor_traffic(&self, timeout: Duration) -> impl std::future::Future<Output = Result<Vec<TrafficData>>> + Send;
-    fn monitor_connections(&self, timeout: Duration) -> impl std::future::Future<Output = Result<Vec<ConnectionData>>> + Send;
+    fn monitor_traffic(
+        &self,
+        timeout: Duration,
+    ) -> impl std::future::Future<Output = Result<Vec<TrafficData>>> + Send;
+    fn monitor_connections(
+        &self,
+        timeout: Duration,
+    ) -> impl std::future::Future<Output = Result<Vec<ConnectionData>>> + Send;
 }
 
 impl TrafficMonitorExt for IpcStreamClient {
     async fn monitor_traffic(&self, timeout: Duration) -> Result<Vec<TrafficData>> {
-        self.get("/traffic")
-            .timeout(timeout)
-            .json_results()
-            .await
+        self.get("/traffic").timeout(timeout).json_results().await
     }
-    
+
     async fn monitor_connections(&self, timeout: Duration) -> Result<Vec<ConnectionData>> {
         self.get("/connections")
             .timeout(timeout)
@@ -165,7 +168,8 @@ async fn main() -> Result<()> {
             if let Ok(traffic) = serde_json::from_str::<TrafficData>(line) {
                 // Only keep samples with significant traffic
                 let total = traffic.up + traffic.down;
-                if total > 1024 { // More than 1KB/s
+                if total > 1024 {
+                    // More than 1KB/s
                     Some(total)
                 } else {
                     None
@@ -180,7 +184,7 @@ async fn main() -> Result<()> {
         let total_traffic: u64 = aggregated_stats.iter().sum();
         let avg_traffic = total_traffic / aggregated_stats.len() as u64;
         let max_traffic = *aggregated_stats.iter().max().unwrap_or(&0);
-        
+
         println!("📊 Traffic Statistics (samples with >1KB/s):");
         println!("  • Samples: {}", aggregated_stats.len());
         println!("  • Total: {}", format_bytes(total_traffic));

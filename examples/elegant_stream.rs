@@ -1,5 +1,5 @@
 use dotenv::dotenv;
-use kode_bridge::{Result, IpcStreamClient, StreamClientConfig};
+use kode_bridge::{IpcStreamClient, Result, StreamClientConfig};
 use std::env;
 use std::time::Duration;
 
@@ -120,7 +120,10 @@ async fn main() -> Result<()> {
         })
         .await?;
 
-    println!("✅ Processed {} valid traffic entries", processed_data.len());
+    println!(
+        "✅ Processed {} valid traffic entries",
+        processed_data.len()
+    );
     for (i, (bytes, formatted)) in processed_data.iter().take(3).enumerate() {
         println!("  {}. {} bytes ({})", i + 1, bytes, formatted);
     }

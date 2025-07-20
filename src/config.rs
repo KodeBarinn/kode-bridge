@@ -17,7 +17,6 @@ pub struct GlobalConfig {
     pub features: FeatureFlags,
 }
 
-
 /// Client configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientGlobalConfig {
@@ -131,38 +130,46 @@ impl Default for FeatureFlags {
 impl GlobalConfig {
     /// Load configuration from a TOML file
     pub fn from_toml_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| KodeBridgeError::configuration(format!("Failed to read config file: {}", e)))?;
-        
-        toml::from_str(&content)
-            .map_err(|e| KodeBridgeError::configuration(format!("Failed to parse TOML config: {}", e)))
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            KodeBridgeError::configuration(format!("Failed to read config file: {}", e))
+        })?;
+
+        toml::from_str(&content).map_err(|e| {
+            KodeBridgeError::configuration(format!("Failed to parse TOML config: {}", e))
+        })
     }
 
     /// Load configuration from a JSON file
     pub fn from_json_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| KodeBridgeError::configuration(format!("Failed to read config file: {}", e)))?;
-        
-        serde_json::from_str(&content)
-            .map_err(|e| KodeBridgeError::configuration(format!("Failed to parse JSON config: {}", e)))
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            KodeBridgeError::configuration(format!("Failed to read config file: {}", e))
+        })?;
+
+        serde_json::from_str(&content).map_err(|e| {
+            KodeBridgeError::configuration(format!("Failed to parse JSON config: {}", e))
+        })
     }
 
     /// Save configuration to a TOML file
     pub fn save_toml_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| KodeBridgeError::configuration(format!("Failed to serialize config: {}", e)))?;
-        
-        std::fs::write(path, content)
-            .map_err(|e| KodeBridgeError::configuration(format!("Failed to write config file: {}", e)))
+        let content = toml::to_string_pretty(self).map_err(|e| {
+            KodeBridgeError::configuration(format!("Failed to serialize config: {}", e))
+        })?;
+
+        std::fs::write(path, content).map_err(|e| {
+            KodeBridgeError::configuration(format!("Failed to write config file: {}", e))
+        })
     }
 
     /// Save configuration to a JSON file
     pub fn save_json_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let content = serde_json::to_string_pretty(self)
-            .map_err(|e| KodeBridgeError::configuration(format!("Failed to serialize config: {}", e)))?;
-        
-        std::fs::write(path, content)
-            .map_err(|e| KodeBridgeError::configuration(format!("Failed to write config file: {}", e)))
+        let content = serde_json::to_string_pretty(self).map_err(|e| {
+            KodeBridgeError::configuration(format!("Failed to serialize config: {}", e))
+        })?;
+
+        std::fs::write(path, content).map_err(|e| {
+            KodeBridgeError::configuration(format!("Failed to write config file: {}", e))
+        })
     }
 
     /// Apply environment variable overrides
@@ -231,19 +238,27 @@ impl GlobalConfig {
     /// Validate configuration
     pub fn validate(&self) -> Result<()> {
         if self.client.default_timeout_ms == 0 {
-            return Err(KodeBridgeError::configuration("Client timeout cannot be zero"));
+            return Err(KodeBridgeError::configuration(
+                "Client timeout cannot be zero",
+            ));
         }
 
         if self.client.max_retries > 10 {
-            return Err(KodeBridgeError::configuration("Max retries should be <= 10"));
+            return Err(KodeBridgeError::configuration(
+                "Max retries should be <= 10",
+            ));
         }
 
         if self.client.pool.max_size == 0 {
-            return Err(KodeBridgeError::configuration("Pool max size cannot be zero"));
+            return Err(KodeBridgeError::configuration(
+                "Pool max size cannot be zero",
+            ));
         }
 
         if self.client.pool.min_idle > self.client.pool.max_size {
-            return Err(KodeBridgeError::configuration("Pool min_idle cannot be greater than max_size"));
+            return Err(KodeBridgeError::configuration(
+                "Pool min_idle cannot be greater than max_size",
+            ));
         }
 
         if !["trace", "debug", "info", "warn", "error"].contains(&self.logging.level.as_str()) {

@@ -1,6 +1,6 @@
+use crate::errors::AnyResult;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::errors::AnyResult;
 
 /// Legacy response format for backward compatibility
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -15,4 +15,3 @@ impl LegacyResponse {
         serde_json::from_str(&self.body).map_err(Into::into)
     }
 }
-

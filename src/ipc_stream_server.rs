@@ -6,9 +6,8 @@
 use crate::errors::{KodeBridgeError, Result};
 use bytes::Bytes;
 use interprocess::local_socket::{
-    tokio::prelude::LocalSocketStream,
+    GenericFilePath, ListenerOptions, Name, ToFsName, tokio::prelude::LocalSocketStream,
     traits::tokio::Listener,
-    GenericFilePath, Name, ToFsName, ListenerOptions,
 };
 use parking_lot::RwLock;
 use serde_json::Value;
@@ -19,17 +18,14 @@ use std::{
     path::Path,
     pin::Pin,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 use tokio::{
     io::AsyncWriteExt,
-    sync::{
-        broadcast,
-        Semaphore,
-    },
+    sync::{Semaphore, broadcast},
     time::timeout,
 };
 use tokio_stream::{Stream, StreamExt};
@@ -199,11 +195,11 @@ impl StreamServerStats {
     fn update_message_rate(&mut self, message_count: u64) {
         let now = Instant::now();
         let duration = now.duration_since(self.last_update).as_secs_f64();
-        
+
         if duration > 0.0 {
             self.messages_per_second = message_count as f64 / duration;
         }
-        
+
         self.total_messages += message_count;
         self.last_update = now;
     }
@@ -228,14 +224,16 @@ impl fmt::Display for StreamServerStats {
 /// Data source trait for streaming servers
 pub trait StreamSource: Send + Sync {
     /// Get the next batch of messages to send
-    fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>>;
-    
+    fn next_messages(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>>;
+
     /// Check if the source has more data
     fn has_more(&self) -> bool;
-    
+
     /// Initialize the source
     fn initialize(&mut self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
-    
+
     /// Clean up the source
     fn cleanup(&mut self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 }
@@ -262,7 +260,9 @@ impl JsonDataSource {
 }
 
 impl StreamSource for JsonDataSource {
-    fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
+    fn next_messages(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
         Box::pin(async move {
             let now = Instant::now();
             if now.duration_since(self.last_generated) >= self.interval {
@@ -309,7 +309,9 @@ impl<S> StreamSource for IteratorSource<S>
 where
     S: Stream<Item = StreamMessage> + Send + Sync + Unpin,
 {
-    fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
+    fn next_messages(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
         Box::pin(async move {
             match self.stream.next().await {
                 Some(message) => Ok(vec![message]),
@@ -439,11 +441,11 @@ impl IpcStreamServer {
         let source_broadcast_tx = broadcast_tx.clone();
         let (source_shutdown_tx, source_shutdown_rx) = tokio::sync::oneshot::channel();
         let source_shutdown = source_shutdown_rx;
-        
+
         let source_task = tokio::spawn(async move {
             let mut source = source;
             let mut shutdown_rx = source_shutdown;
-            
+
             loop {
                 tokio::select! {
                     // Generate data
@@ -499,7 +501,7 @@ impl IpcStreamServer {
                             // Acquire connection permit
                             if let Ok(permit) = self.connection_semaphore.clone().try_acquire_owned() {
                                 let client_id = self.client_id_counter.fetch_add(1, Ordering::SeqCst);
-                                
+
                                 {
                                     let mut stats = self.stats.write();
                                     stats.total_connections += 1;
@@ -556,7 +558,7 @@ impl IpcStreamServer {
 
         // Signal source task to stop
         let _ = source_shutdown_tx.send(());
-        
+
         // Stop source task
         source_task.abort();
 
@@ -565,7 +567,9 @@ impl IpcStreamServer {
 
         // Wait for active connections to finish
         let start = Instant::now();
-        while self.stats.read().active_connections > 0 && start.elapsed() < self.config.shutdown_timeout {
+        while self.stats.read().active_connections > 0
+            && start.elapsed() < self.config.shutdown_timeout
+        {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
@@ -623,7 +627,7 @@ impl IpcStreamServer {
                                 _ => {
                                     // Send message to client
                                     let data = message.to_bytes();
-                                    
+
                                     if data.len() > config.max_message_size {
                                         warn!("Message too large for client {}, skipping", client_id);
                                         continue;
@@ -677,13 +681,13 @@ impl IpcStreamServer {
                     let now = Instant::now();
                     if now.duration_since(last_keepalive) >= config.keepalive_interval {
                         last_keepalive = now;
-                        
+
                         let ping_data = StreamMessage::Ping.to_bytes();
                         if let Err(e) = timeout(config.write_timeout, stream.write_all(&ping_data)).await {
                             warn!("Failed to send keepalive to client {}: {:?}", client_id, e);
                             break;
                         }
-                        
+
                         if let Err(e) = stream.flush().await {
                             warn!("Failed to flush keepalive to client {}: {}", client_id, e);
                             break;

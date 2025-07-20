@@ -20,7 +20,7 @@
 /// CUSTOM_PIPE=\\.\pipe\my_pipe
 /// ```
 use dotenv::dotenv;
-use kode_bridge::{IpcHttpClient, Result, ClientConfig, PoolConfig};
+use kode_bridge::{ClientConfig, IpcHttpClient, PoolConfig, Result};
 use serde_json::Value;
 use std::env;
 use std::time::Duration;
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
 
     println!("📡 Large Data Request Example");
     println!("Connecting to: {}", ipc_path);
-    
+
     // Configure client for large responses
     let config = ClientConfig {
         default_timeout: Duration::from_secs(30), // Longer timeout for large data
@@ -51,35 +51,39 @@ async fn main() -> Result<()> {
         max_retries: 2,
         retry_delay: Duration::from_millis(500),
     };
-    
+
     let client = IpcHttpClient::with_config(&ipc_path, config)?;
-    
+
     println!("🔄 Sending request to /proxies endpoint...");
-    
+
     // Use the new fluent API with extended timeout for large responses
     let response = client
         .get("/proxies")
         .timeout(Duration::from_secs(45)) // Extended timeout for large data
         .send()
         .await?;
-    
+
     println!("✅ Response received!");
     println!("🔍 Response Details:");
     println!("  Status: {}", response.status());
     println!("  Success: {}", response.is_success());
     println!("  Content Length: {} bytes", response.content_length());
-    
+
     // Handle large JSON responses efficiently
     match response.json_value() {
         Ok(json) => {
             if let Value::Array(ref items) = json {
                 println!("📊 Large Data Stats:");
                 println!("  Array length: {} items", items.len());
-                println!("  First item preview: {:#}", 
-                    items.first().unwrap_or(&Value::Null));
+                println!(
+                    "  First item preview: {:#}",
+                    items.first().unwrap_or(&Value::Null)
+                );
                 if items.len() > 1 {
-                    println!("  Last item preview: {:#}", 
-                        items.last().unwrap_or(&Value::Null));
+                    println!(
+                        "  Last item preview: {:#}",
+                        items.last().unwrap_or(&Value::Null)
+                    );
                 }
             } else if let Value::Object(ref obj) = json {
                 println!("📊 Large Object Stats:");
@@ -105,11 +109,11 @@ async fn main() -> Result<()> {
             println!("⚠️  JSON parse error: {}", e);
         }
     }
-    
+
     // Show pool stats
     if let Some(stats) = client.pool_stats() {
         println!("📊 Connection Pool Stats: {}", stats);
     }
-    
+
     Ok(())
 }

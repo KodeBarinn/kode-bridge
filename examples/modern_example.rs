@@ -1,4 +1,4 @@
-use kode_bridge::{IpcHttpClient, IpcStreamClient, Result, ClientConfig, StreamClientConfig};
+use kode_bridge::{ClientConfig, IpcHttpClient, IpcStreamClient, Result, StreamClientConfig};
 use std::time::Duration;
 
 #[tokio::main]
@@ -25,17 +25,19 @@ async fn main() -> Result<()> {
 
     // Modern fluent API examples
     println!("\n🔥 HTTP Client Examples:");
-    
+
     // Note: These examples would require an actual service running
     // They demonstrate the API structure and usage patterns
-    
+
     println!("  • GET request example:");
-    println!("    let response = client.get(\"/api/status\").timeout(Duration::from_secs(5)).send().await?;");
-    
+    println!(
+        "    let response = client.get(\"/api/status\").timeout(Duration::from_secs(5)).send().await?;"
+    );
+
     println!("  • POST with JSON example:");
     println!("    let data = json!({{\"user\": \"alice\", \"action\": \"login\"}});");
     println!("    let response = client.post(\"/api/auth\").json_body(&data).send().await?;");
-    
+
     println!("  • Response handling example:");
     println!("    if response.is_success() {{");
     println!("        let result: MyData = response.json()?;");
@@ -85,6 +87,6 @@ async fn main() -> Result<()> {
     println!("  • Backward compatibility with legacy APIs");
 
     println!("\n🎯 Example completed successfully!");
-    
+
     Ok(())
 }

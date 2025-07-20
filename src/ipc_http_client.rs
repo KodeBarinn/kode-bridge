@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::errors::{KodeBridgeError, Result};
-use crate::http_client::{Response, RequestBuilder, send_request};
+use crate::http_client::{RequestBuilder, Response, send_request};
 use crate::pool::{ConnectionPool, PoolConfig, PooledConnection};
 use http::Method;
 use std::str::FromStr;
@@ -150,12 +150,17 @@ impl IpcHttpClient {
     where
         P: AsRef<Path>,
     {
-        let name = path.as_ref().to_fs_name::<GenericFilePath>()
+        let name = path
+            .as_ref()
+            .to_fs_name::<GenericFilePath>()
             .map_err(|e| KodeBridgeError::configuration(format!("Invalid path: {}", e)))?
             .into_owned();
 
         let pool = if config.enable_pooling {
-            Some(ConnectionPool::new(name.clone(), config.pool_config.clone()))
+            Some(ConnectionPool::new(
+                name.clone(),
+                config.pool_config.clone(),
+            ))
         } else {
             None
         };
@@ -166,7 +171,7 @@ impl IpcHttpClient {
     /// Create a direct connection (bypassing pool)
     async fn create_direct_connection(&self) -> Result<LocalSocketStream> {
         let mut last_error = None;
-        
+
         for attempt in 0..self.config.max_retries {
             if attempt > 0 {
                 tokio::time::sleep(self.config.retry_delay).await;
@@ -207,7 +212,9 @@ impl IpcHttpClient {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> crate::errors::AnyResult<crate::response::LegacyResponse> {
-        let response = self.send_request_internal(method, path, body, self.config.default_timeout).await?;
+        let response = self
+            .send_request_internal(method, path, body, self.config.default_timeout)
+            .await?;
         Ok(response.to_legacy())
     }
 
@@ -223,7 +230,7 @@ impl IpcHttpClient {
             .map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
 
         let mut builder = RequestBuilder::new(method, path.to_string());
-        
+
         if let Some(json_body) = body {
             builder = builder.json(json_body)?;
         }
@@ -233,7 +240,7 @@ impl IpcHttpClient {
         // Execute with timeout
         let result = tokio::time::timeout(timeout, async {
             let mut connection = self.get_connection().await?;
-            
+
             match &mut connection {
                 Either::Pool(conn) => {
                     if let Some(stream) = conn.stream() {
@@ -242,11 +249,10 @@ impl IpcHttpClient {
                         Err(KodeBridgeError::connection("Pooled connection is invalid"))
                     }
                 }
-                Either::Direct(stream) => {
-                    send_request(stream, request).await
-                }
+                Either::Direct(stream) => send_request(stream, request).await,
             }
-        }).await;
+        })
+        .await;
 
         match result {
             Ok(response) => response,
@@ -339,13 +345,16 @@ impl<'a> HttpRequestBuilder<'a> {
     /// Send the request
     pub async fn send(self) -> Result<HttpResponse> {
         let timeout = self.timeout.unwrap_or(self.client.config.default_timeout);
-        let response = self.client.send_request_internal(
-            self.method.as_str(),
-            &self.path,
-            self.body.as_ref(),
-            timeout,
-        ).await?;
-        
+        let response = self
+            .client
+            .send_request_internal(
+                self.method.as_str(),
+                &self.path,
+                self.body.as_ref(),
+                timeout,
+            )
+            .await?;
+
         Ok(HttpResponse::new(response))
     }
 }

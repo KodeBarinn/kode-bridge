@@ -8,8 +8,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::errors::{KodeBridgeError, Result};
-use crate::stream_client::{StreamingResponse, send_streaming_request};
 use crate::http_client::RequestBuilder;
+use crate::stream_client::{StreamingResponse, send_streaming_request};
 use http::Method;
 use std::str::FromStr;
 use tracing::{debug, trace};
@@ -105,17 +105,15 @@ impl StreamResponse {
     where
         F: FnMut(&str) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>,
     {
-        self.inner.process_lines_with_timeout(timeout, |line| {
-            handler(line).map(|_| true) // Convert to continue flag
-        }).await
+        self.inner
+            .process_lines_with_timeout(timeout, |line| {
+                handler(line).map(|_| true) // Convert to continue flag
+            })
+            .await
     }
 
     /// Process stream with custom JSON processing
-    pub async fn process_json<F, T>(
-        self,
-        timeout: Duration,
-        handler: F,
-    ) -> Result<Vec<T>>
+    pub async fn process_json<F, T>(self, timeout: Duration, handler: F) -> Result<Vec<T>>
     where
         F: FnMut(&str) -> Option<T>,
         T: Send + 'static,
@@ -158,7 +156,9 @@ impl IpcStreamClient {
     where
         P: AsRef<Path>,
     {
-        let name = path.as_ref().to_fs_name::<GenericFilePath>()
+        let name = path
+            .as_ref()
+            .to_fs_name::<GenericFilePath>()
             .map_err(|e| KodeBridgeError::configuration(format!("Invalid path: {}", e)))?
             .into_owned();
 
@@ -168,7 +168,7 @@ impl IpcStreamClient {
     /// Create a connection with retry logic
     async fn create_connection(&self) -> Result<LocalSocketStream> {
         let mut last_error = None;
-        
+
         for attempt in 0..self.config.max_retries {
             if attempt > 0 {
                 tokio::time::sleep(self.config.retry_delay).await;
@@ -205,7 +205,7 @@ impl IpcStreamClient {
             .map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
 
         let mut builder = RequestBuilder::new(method, path.to_string());
-        
+
         if let Some(json_body) = body {
             builder = builder.json(json_body)?;
         }
@@ -216,7 +216,8 @@ impl IpcStreamClient {
         let result = tokio::time::timeout(timeout, async {
             let stream = self.create_connection().await?;
             send_streaming_request(stream, request).await
-        }).await;
+        })
+        .await;
 
         match result {
             Ok(response) => response,
@@ -296,13 +297,16 @@ impl<'a> StreamRequestBuilder<'a> {
 
     /// Send the streaming request
     pub async fn send(self) -> Result<StreamResponse> {
-        let response = self.client.send_request_internal(
-            self.method.as_str(),
-            &self.path,
-            self.body.as_ref(),
-            self.timeout,
-        ).await?;
-        
+        let response = self
+            .client
+            .send_request_internal(
+                self.method.as_str(),
+                &self.path,
+                self.body.as_ref(),
+                self.timeout,
+            )
+            .await?;
+
         Ok(StreamResponse::new(response))
     }
 

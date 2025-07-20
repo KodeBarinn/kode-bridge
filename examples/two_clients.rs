@@ -1,5 +1,5 @@
 use dotenv::dotenv;
-use kode_bridge::{Result, IpcHttpClient, IpcStreamClient, ClientConfig, StreamClientConfig};
+use kode_bridge::{ClientConfig, IpcHttpClient, IpcStreamClient, Result, StreamClientConfig};
 use std::env;
 use std::time::Duration;
 
@@ -12,15 +12,15 @@ pub struct TrafficData {
 
 // Extension trait for convenience
 pub trait TrafficMonitorExt {
-    fn monitor_traffic(&self, timeout: Duration) -> impl std::future::Future<Output = Result<Vec<TrafficData>>> + Send;
+    fn monitor_traffic(
+        &self,
+        timeout: Duration,
+    ) -> impl std::future::Future<Output = Result<Vec<TrafficData>>> + Send;
 }
 
 impl TrafficMonitorExt for IpcStreamClient {
     async fn monitor_traffic(&self, timeout: Duration) -> Result<Vec<TrafficData>> {
-        self.get("/traffic")
-            .timeout(timeout)
-            .json_results()
-            .await
+        self.get("/traffic").timeout(timeout).json_results().await
     }
 }
 
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
             Ok(json_data) => {
                 if let Some(proxies_obj) = json_data.as_object() {
                     println!("🔍 Found {} proxy groups", proxies_obj.len());
-                    
+
                     // Show first few proxy names
                     for (i, (name, _)) in proxies_obj.iter().take(3).enumerate() {
                         println!("  {}. {}", i + 1, name);

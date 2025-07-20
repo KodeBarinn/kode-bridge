@@ -3,10 +3,7 @@
 //! This example demonstrates how to create a simple HTTP-style IPC server
 //! that can handle various types of requests with routing and JSON responses.
 
-use kode_bridge::{
-    IpcHttpServer, Router, HttpResponse, 
-    ServerConfig, Result
-};
+use kode_bridge::{HttpResponse, IpcHttpServer, Result, Router, ServerConfig};
 use serde_json::json;
 use std::env;
 use std::time::Duration;
@@ -69,7 +66,6 @@ async fn main() -> Result<()> {
             };
             HttpResponse::json(&version)
         })
-        
         // GET /health - Health check endpoint
         .get("/health", |_ctx| async move {
             Ok(HttpResponse::json(&json!({
@@ -78,7 +74,6 @@ async fn main() -> Result<()> {
                 "uptime": "available"
             }))?)
         })
-        
         // GET /users - List users (mock data)
         .get("/users", |_ctx| async move {
             let users = vec![
@@ -95,7 +90,6 @@ async fn main() -> Result<()> {
             ];
             HttpResponse::json(&users)
         })
-        
         // GET /users/{id} - Get user by ID (simplified routing)
         .get("/user/1", |_ctx| async move {
             let user = UserData {
@@ -105,7 +99,6 @@ async fn main() -> Result<()> {
             };
             HttpResponse::json(&user)
         })
-        
         // POST /users - Create a new user
         .post("/users", |ctx| async move {
             match ctx.json::<CreateUserRequest>() {
@@ -132,17 +125,14 @@ async fn main() -> Result<()> {
                         .json(&user)?
                         .build())
                 }
-                Err(e) => {
-                    Ok(HttpResponse::builder()
-                        .status(http::StatusCode::BAD_REQUEST)
-                        .json(&json!({
-                            "error": format!("Invalid JSON: {}", e)
-                        }))?
-                        .build())
-                }
+                Err(e) => Ok(HttpResponse::builder()
+                    .status(http::StatusCode::BAD_REQUEST)
+                    .json(&json!({
+                        "error": format!("Invalid JSON: {}", e)
+                    }))?
+                    .build()),
             }
         })
-        
         // POST /echo - Echo back the request body
         .post("/echo", |ctx| async move {
             let response_data = json!({
@@ -155,7 +145,6 @@ async fn main() -> Result<()> {
             });
             HttpResponse::json(&response_data)
         })
-        
         // PUT /config - Update configuration
         .put("/config", |ctx| async move {
             match ctx.json::<serde_json::Value>() {
@@ -166,17 +155,14 @@ async fn main() -> Result<()> {
                         "config": config_data
                     }))
                 }
-                Err(e) => {
-                    Ok(HttpResponse::builder()
-                        .status(http::StatusCode::BAD_REQUEST)
-                        .json(&json!({
-                            "error": format!("Invalid config: {}", e)
-                        }))?
-                        .build())
-                }
+                Err(e) => Ok(HttpResponse::builder()
+                    .status(http::StatusCode::BAD_REQUEST)
+                    .json(&json!({
+                        "error": format!("Invalid config: {}", e)
+                    }))?
+                    .build()),
             }
         })
-        
         // DELETE /cache - Clear cache
         .delete("/cache", |_ctx| async move {
             Ok(HttpResponse::builder()
@@ -185,8 +171,7 @@ async fn main() -> Result<()> {
         });
 
     // Create and configure server
-    let mut server = IpcHttpServer::with_config(&ipc_path, config)?
-        .router(router);
+    let mut server = IpcHttpServer::with_config(&ipc_path, config)?.router(router);
 
     println!("🌟 Server configured with endpoints:");
     println!("  GET    /version     - API version information");
@@ -209,16 +194,19 @@ async fn main() -> Result<()> {
     println!("✅ Server started successfully!");
     println!("📊 Use the following commands to test:");
     println!();
-    
+
     #[cfg(unix)]
     {
         println!("# Test basic endpoints:");
-        println!("CUSTOM_SOCK={} cargo run --features=client --example request", ipc_path);
+        println!(
+            "CUSTOM_SOCK={} cargo run --features=client --example request",
+            ipc_path
+        );
         println!();
         println!("# Using curl-like tools with HTTP over IPC:");
         println!("# (These would work if you had an HTTP-to-IPC bridge)");
     }
-    
+
     #[cfg(windows)]
     {
         println!("# Test basic endpoints:");
@@ -236,7 +224,7 @@ async fn main() -> Result<()> {
 
     // Wait for shutdown signal
     println!("🎯 Server is running. Press Ctrl+C to shutdown...");
-    
+
     match signal::ctrl_c().await {
         Ok(()) => {
             println!("🛑 Shutdown signal received");
@@ -249,12 +237,12 @@ async fn main() -> Result<()> {
     // Attempt graceful shutdown
     println!("🔄 Shutting down server...");
     server_handle.abort();
-    
+
     // Give some time for cleanup
     tokio::time::sleep(Duration::from_millis(500)).await;
-    
+
     println!("✅ Server stopped");
-    
+
     Ok(())
 }
 

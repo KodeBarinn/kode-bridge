@@ -1,5 +1,5 @@
 use dotenv::dotenv;
-use kode_bridge::{Result, IpcHttpClient, ClientConfig};
+use kode_bridge::{ClientConfig, IpcHttpClient, Result};
 use serde_json::json;
 use std::env;
 use std::time::Duration;
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         retry_delay: Duration::from_millis(100),
         ..Default::default()
     };
-    
+
     let client = IpcHttpClient::with_config(&ipc_path, config)?;
 
     println!("📊 Method 1: Modern GET request with fluent API");
@@ -149,8 +149,16 @@ async fn main() -> Result<()> {
 
     match response.status() {
         200..=299 => println!("✅ Success: {:?}", response.body()),
-        400..=499 => println!("❌ Client error {}: {:?}", response.status(), response.body()),
-        500..=599 => println!("💥 Server error {}: {:?}", response.status(), response.body()),
+        400..=499 => println!(
+            "❌ Client error {}: {:?}",
+            response.status(),
+            response.body()
+        ),
+        500..=599 => println!(
+            "💥 Server error {}: {:?}",
+            response.status(),
+            response.body()
+        ),
         _ => println!(
             "🤷 Unknown status {}: {:?}",
             response.status(),

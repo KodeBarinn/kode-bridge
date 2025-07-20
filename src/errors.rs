@@ -69,9 +69,9 @@ impl KodeBridgeError {
     pub fn timeout(duration_ms: u64) -> Self {
         Self::Timeout { duration_ms }
     }
-    
+
     pub fn timeout_msg<S: Into<String>>(_message: S) -> Self {
-        // Convert to a reasonable duration for now  
+        // Convert to a reasonable duration for now
         Self::Timeout { duration_ms: 30000 }
     }
 
@@ -98,19 +98,19 @@ impl KodeBridgeError {
             message: message.into(),
         }
     }
-    
+
     pub fn json_serialize<S: Into<String>>(message: S) -> Self {
         Self::JsonSerialize {
             message: message.into(),
         }
     }
-    
+
     pub fn json_parse<S: Into<String>>(message: S) -> Self {
         Self::JsonSerialize {
             message: message.into(),
         }
     }
-    
+
     pub fn validation<S: Into<String>>(message: S) -> Self {
         Self::Configuration {
             message: message.into(),
@@ -149,7 +149,6 @@ impl From<AnyError> for KodeBridgeError {
         KodeBridgeError::custom(err.to_string())
     }
 }
-
 
 /// Simple string error for backward compatibility
 #[derive(Debug)]

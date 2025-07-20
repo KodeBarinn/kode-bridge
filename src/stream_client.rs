@@ -2,7 +2,7 @@ use crate::errors::{KodeBridgeError, Result};
 use crate::http_client::RequestBuilder;
 use bytes::Bytes;
 use futures::stream::StreamExt;
-use http::{header, HeaderMap, StatusCode, Method};
+use http::{HeaderMap, Method, StatusCode, header};
 use pin_project_lite::pin_project;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -126,11 +126,7 @@ impl StreamingResponse {
     }
 
     /// Process stream with custom JSON handler
-    pub async fn process_json<F, T>(
-        mut self,
-        timeout: Duration,
-        mut handler: F,
-    ) -> Result<Vec<T>>
+    pub async fn process_json<F, T>(mut self, timeout: Duration, mut handler: F) -> Result<Vec<T>>
     where
         F: FnMut(&str) -> Option<T>,
         T: Send + 'static,
@@ -245,10 +241,7 @@ impl StreamingResponse {
     }
 
     /// Collect stream data with a timeout
-    pub async fn collect_text_with_timeout(
-        mut self,
-        timeout: Duration,
-    ) -> Result<String> {
+    pub async fn collect_text_with_timeout(mut self, timeout: Duration) -> Result<String> {
         let mut body_lines = Vec::new();
         let timeout_future = tokio::time::sleep(timeout);
         tokio::pin!(timeout_future);
@@ -313,9 +306,9 @@ where
         if n == 0 {
             return Err(KodeBridgeError::protocol("Unexpected end of stream"));
         }
-        
+
         buffer.extend_from_slice(&line);
-        
+
         // Check for end of headers (\r\n\r\n)
         if buffer.len() >= 4 {
             for i in 0..buffer.len() - 3 {
@@ -325,20 +318,19 @@ where
                 }
             }
         }
-        
+
         if headers_end.is_some() {
             break;
         }
     }
 
-    let headers_end = headers_end.ok_or_else(|| {
-        KodeBridgeError::protocol("Could not find end of HTTP headers")
-    })?;
+    let headers_end = headers_end
+        .ok_or_else(|| KodeBridgeError::protocol("Could not find end of HTTP headers"))?;
 
     // Parse the headers using httparse
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut response = httparse::Response::new(&mut headers);
-    
+
     let status = match response.parse(&buffer[..headers_end])? {
         httparse::Status::Complete(_) => response.code.unwrap(),
         httparse::Status::Partial => {
@@ -349,8 +341,8 @@ where
     // Build HeaderMap
     let mut header_map = HeaderMap::new();
     for header in response.headers {
-        let name = http::HeaderName::from_str(header.name)
-            .map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let name =
+            http::HeaderName::from_str(header.name).map_err(|e| KodeBridgeError::Http(e.into()))?;
         let value = http::HeaderValue::from_bytes(header.value)
             .map_err(|e| KodeBridgeError::Http(e.into()))?;
         header_map.insert(name, value);
@@ -368,28 +360,25 @@ where
 }
 
 /// Send HTTP request and get streaming response
-pub async fn send_streaming_request<S>(
-    mut stream: S,
-    request: Bytes,
-) -> Result<StreamingResponse>
+pub async fn send_streaming_request<S>(mut stream: S, request: Bytes) -> Result<StreamingResponse>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     // Send request
     stream.write_all(&request).await?;
     stream.flush().await?;
-    
+
     trace!("Sent HTTP streaming request ({} bytes)", request.len());
-    
+
     // Parse response
     let response = parse_streaming_response(stream).await?;
-    
+
     debug!(
         "Received HTTP streaming response: {} {}",
         response.status(),
         response.content_length().unwrap_or(0)
     );
-    
+
     Ok(response)
 }
 
@@ -404,15 +393,14 @@ pub async fn http_request_stream<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let method = Method::from_str(method)
-        .map_err(|e| KodeBridgeError::Http(e.into()))?;
-    
+    let method = Method::from_str(method).map_err(|e| KodeBridgeError::Http(e.into()))?;
+
     let mut builder = RequestBuilder::new(method, path.to_string());
-    
+
     if let Some(json_body) = body {
         builder = builder.json(json_body)?;
     }
-    
+
     let request = builder.build()?;
     send_streaming_request(stream, request).await
 }

@@ -1,7 +1,7 @@
 use crate::errors::{KodeBridgeError, Result};
+use interprocess::local_socket::Name;
 use interprocess::local_socket::tokio::prelude::LocalSocketStream;
 use interprocess::local_socket::traits::tokio::Stream;
-use interprocess::local_socket::Name;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -88,8 +88,7 @@ impl PooledConnection {
 
     /// Check if connection is still valid
     pub fn is_valid(&self) -> bool {
-        self.inner.is_some() && 
-        self.last_used.elapsed() < self.pool.config.max_idle_time()
+        self.inner.is_some() && self.last_used.elapsed() < self.pool.config.max_idle_time()
     }
 
     /// Get connection age
@@ -131,7 +130,7 @@ impl ConnectionPoolInner {
 
     async fn create_connection(&self) -> Result<LocalSocketStream> {
         let mut last_error = None;
-        
+
         for attempt in 0..self.config.max_retries {
             if attempt > 0 {
                 tokio::time::sleep(self.config.retry_delay()).await;
@@ -158,7 +157,7 @@ impl ConnectionPoolInner {
 
     fn get_pooled_connection(&self) -> Option<LocalSocketStream> {
         let mut connections = self.connections.lock();
-        
+
         // Remove expired connections
         let now = Instant::now();
         while let Some((_, created_at)) = connections.front() {
@@ -178,7 +177,7 @@ impl ConnectionPoolInner {
 
     fn return_connection(&self, stream: LocalSocketStream) {
         let mut connections = self.connections.lock();
-        
+
         // Only keep the connection if we haven't exceeded max_size
         if connections.len() < self.config.max_size {
             connections.push_back((stream, Instant::now()));
@@ -190,12 +189,13 @@ impl ConnectionPoolInner {
 
     async fn get_connection_with_timeout(&self) -> Result<LocalSocketStream> {
         // Try to get a permit within the timeout
-        let permit = tokio::time::timeout(
-            self.config.connection_timeout(),
-            self.semaphore.acquire()
-        ).await
-        .map_err(|_| KodeBridgeError::timeout(self.config.connection_timeout().as_millis() as u64))?
-        .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
+        let permit =
+            tokio::time::timeout(self.config.connection_timeout(), self.semaphore.acquire())
+                .await
+                .map_err(|_| {
+                    KodeBridgeError::timeout(self.config.connection_timeout().as_millis() as u64)
+                })?
+                .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
 
         // Try to get an existing connection first
         if let Some(stream) = self.get_pooled_connection() {
