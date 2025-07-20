@@ -239,6 +239,7 @@ async fn main() -> Result<()> {
 }
 
 // Example of manual broadcasting (for demonstration)
+#[allow(dead_code)]
 async fn manual_broadcast_example() -> Result<()> {
     // This shows how you might manually broadcast messages
     let _data = json!({
@@ -253,6 +254,7 @@ async fn manual_broadcast_example() -> Result<()> {
 }
 
 // Example of different message types
+#[allow(dead_code)]
 fn demonstrate_message_types() {
     // JSON messages
     let _json_msg = StreamMessage::json(&json!({

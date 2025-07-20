@@ -259,6 +259,7 @@ async fn main() -> Result<()> {
 }
 
 // Helper function to demonstrate server statistics
+#[allow(dead_code)]
 async fn print_server_stats() {
     // This would be called periodically to show server stats
     // For now, it's just a placeholder

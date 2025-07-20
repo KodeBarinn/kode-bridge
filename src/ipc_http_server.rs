@@ -204,7 +204,7 @@ impl ResponseBuilder {
         HttpResponse {
             status: self.status,
             headers: self.headers,
-            body: self.body.unwrap_or_else(|| Bytes::new()),
+            body: self.body.unwrap_or_default(),
         }
     }
 }
