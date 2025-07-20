@@ -20,23 +20,50 @@
 /// CUSTOM_PIPE=\\.\pipe\my_pipe
 /// ```
 use dotenv::dotenv;
-use kode_bridge::IpcHttpClient;
-use kode_bridge::errors::AnyError;
+use kode_bridge::{IpcHttpClient, Result};
 use std::env;
+use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> Result<(), AnyError> {
+async fn main() -> Result<()> {
     dotenv().ok();
 
-    // Use platform-appropriate environment variable
+    // Use platform-appropriate environment variable with fallback
     #[cfg(unix)]
-    let ipc_path = env::var("CUSTOM_SOCK")?;
+    let ipc_path = env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/example.sock".to_string());
     #[cfg(windows)]
-    let ipc_path = env::var("CUSTOM_PIPE")?;
+    let ipc_path = env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\example".to_string());
 
+    println!("📡 Connecting to: {}", ipc_path);
+    
+    // Create client with modern API
     let client = IpcHttpClient::new(&ipc_path)?;
-    let response = client.get("/version").send().await?;
-    println!("{response:?}");
-    println!("{}", response.json_value()?);
+    
+    // Use the new fluent API with timeout
+    let response = client
+        .get("/version")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?;
+    
+    println!("🔍 Response Details:");
+    println!("  Status: {}", response.status());
+    println!("  Success: {}", response.is_success());
+    println!("  Content Length: {}", response.content_length());
+    
+    // Parse and display JSON response
+    match response.json_value() {
+        Ok(json) => println!("📄 JSON Response: {:#}", json),
+        Err(e) => {
+            println!("📄 Raw Response: {:?}", response.body()?);
+            println!("⚠️  JSON parse error: {}", e);
+        }
+    }
+    
+    // Show pool stats if available
+    if let Some(stats) = client.pool_stats() {
+        println!("📊 Pool Stats: {}", stats);
+    }
+    
     Ok(())
 }

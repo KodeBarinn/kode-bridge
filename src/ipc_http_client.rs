@@ -7,27 +7,57 @@ use interprocess::local_socket::{GenericFilePath, Name, ToFsName};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::errors::AnyResult;
-use crate::http_client::Response;
-use crate::http_client::http_request;
+use crate::errors::{KodeBridgeError, Result};
+use crate::http_client::{Response, RequestBuilder, send_request};
+use crate::pool::{ConnectionPool, PoolConfig, PooledConnection};
+use http::Method;
+use std::str::FromStr;
+use tracing::{debug, trace};
+
+/// Configuration for IPC HTTP client
+#[derive(Debug, Clone)]
+pub struct ClientConfig {
+    /// Default timeout for requests
+    pub default_timeout: Duration,
+    /// Connection pool configuration
+    pub pool_config: PoolConfig,
+    /// Enable connection pooling
+    pub enable_pooling: bool,
+    /// Retry configuration
+    pub max_retries: usize,
+    pub retry_delay: Duration,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            default_timeout: Duration::from_secs(30),
+            pool_config: PoolConfig::default(),
+            enable_pooling: true,
+            max_retries: 3,
+            retry_delay: Duration::from_millis(100),
+        }
+    }
+}
 
 /// Generic IPC HTTP client that works on both Unix and Windows platforms
 ///
-/// This client is optimized for request-response patterns, not streaming.
+/// This client is optimized for request-response patterns with connection pooling support.
 /// For streaming functionality, use `IpcStreamClient` instead.
 pub struct IpcHttpClient {
     name: Name<'static>,
-    #[allow(dead_code)]
-    default_timeout: Duration,
+    config: ClientConfig,
+    pool: Option<ConnectionPool>,
 }
 
 /// HTTP request builder for fluent API
 pub struct HttpRequestBuilder<'a> {
     client: &'a IpcHttpClient,
-    method: String,
+    method: Method,
     path: String,
     body: Option<Value>,
     timeout: Option<Duration>,
+    headers: Vec<(String, String)>,
 }
 
 /// Enhanced HTTP response wrapper with chainable methods
@@ -43,223 +73,291 @@ impl HttpResponse {
 
     /// Get the HTTP status code
     pub fn status(&self) -> u16 {
-        self.inner.status
+        self.inner.status_code()
     }
 
-    /// Get response headers
-    pub fn headers(&self) -> &Value {
-        &self.inner.headers
+    /// Get response headers as JSON value (for backward compatibility)
+    pub fn headers(&self) -> Value {
+        let headers_map: std::collections::HashMap<String, String> = self
+            .inner
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+        serde_json::to_value(headers_map).unwrap_or(Value::Null)
     }
 
     /// Get response body as string
-    pub fn text(&self) -> &str {
-        &self.inner.body
+    pub fn body(&self) -> Result<String> {
+        self.inner.text()
+    }
+
+    /// Check if response indicates success (2xx status)
+    pub fn is_success(&self) -> bool {
+        self.inner.is_success()
+    }
+
+    /// Check if response indicates client error (4xx status)
+    pub fn is_client_error(&self) -> bool {
+        self.inner.is_client_error()
+    }
+
+    /// Check if response indicates server error (5xx status)
+    pub fn is_server_error(&self) -> bool {
+        self.inner.is_server_error()
+    }
+
+    /// Get content length from headers
+    pub fn content_length(&self) -> u64 {
+        self.inner.content_length().unwrap_or(0)
     }
 
     /// Parse response body as JSON
-    pub fn json<T>(&self) -> AnyResult<T>
+    pub fn json<T>(&self) -> Result<T>
     where
         T: DeserializeOwned,
     {
-        serde_json::from_str(&self.inner.body).map_err(Into::into)
-    }
-
-    /// Parse response body as generic JSON value
-    pub fn json_value(&self) -> AnyResult<Value> {
         self.inner.json()
     }
 
-    /// Get response body length
-    pub fn content_length(&self) -> usize {
-        self.inner.body.len()
+    /// Parse response body as generic JSON value
+    pub fn json_value(&self) -> Result<Value> {
+        self.inner.json_value()
     }
 
-    /// Convert to original Response type for backward compatibility
+    /// Get the underlying modern Response
     pub fn into_inner(self) -> Response {
         self.inner
     }
 
-    /// Check if response is successful (status 200-299)
-    pub fn is_success(&self) -> bool {
-        self.status() >= 200 && self.status() < 300
+    /// Convert to legacy Response format for backward compatibility
+    pub fn to_legacy(&self) -> crate::response::LegacyResponse {
+        self.inner.to_legacy()
+    }
+}
+
+impl IpcHttpClient {
+    /// Create a new IPC HTTP client with default configuration
+    pub fn new<P>(path: P) -> Result<Self>
+    where
+        P: AsRef<Path>,
+    {
+        Self::with_config(path, ClientConfig::default())
     }
 
-    /// Check if response is client error (status 400-499)
-    pub fn is_client_error(&self) -> bool {
-        self.status() >= 400 && self.status() < 500
+    /// Create a new IPC HTTP client with custom configuration
+    pub fn with_config<P>(path: P, config: ClientConfig) -> Result<Self>
+    where
+        P: AsRef<Path>,
+    {
+        let name = path.as_ref().to_fs_name::<GenericFilePath>()
+            .map_err(|e| KodeBridgeError::configuration(format!("Invalid path: {}", e)))?
+            .into_owned();
+
+        let pool = if config.enable_pooling {
+            Some(ConnectionPool::new(name.clone(), config.pool_config.clone()))
+        } else {
+            None
+        };
+
+        Ok(Self { name, config, pool })
     }
 
-    /// Check if response is server error (status 500-599)
-    pub fn is_server_error(&self) -> bool {
-        self.status() >= 500 && self.status() < 600
+    /// Create a direct connection (bypassing pool)
+    async fn create_direct_connection(&self) -> Result<LocalSocketStream> {
+        let mut last_error = None;
+        
+        for attempt in 0..self.config.max_retries {
+            if attempt > 0 {
+                tokio::time::sleep(self.config.retry_delay).await;
+            }
+
+            match LocalSocketStream::connect(self.name.clone()).await {
+                Ok(stream) => {
+                    debug!("Created direct connection on attempt {}", attempt + 1);
+                    return Ok(stream);
+                }
+                Err(e) => {
+                    trace!("Connection attempt {} failed: {}", attempt + 1, e);
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(KodeBridgeError::connection(format!(
+            "Failed to create connection after {} attempts: {}",
+            self.config.max_retries,
+            last_error.unwrap()
+        )))
     }
 
-    /// Check if response is any error (status >= 400)
-    pub fn is_error(&self) -> bool {
-        self.status() >= 400
+    /// Get a connection (from pool or create new)
+    async fn get_connection(&self) -> Result<Either<PooledConnection, LocalSocketStream>> {
+        if let Some(ref pool) = self.pool {
+            pool.get_connection().await.map(Either::Pool)
+        } else {
+            self.create_direct_connection().await.map(Either::Direct)
+        }
+    }
+
+    /// Legacy request method for backward compatibility
+    pub async fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> crate::errors::AnyResult<crate::response::LegacyResponse> {
+        let response = self.send_request_internal(method, path, body, self.config.default_timeout).await?;
+        Ok(response.to_legacy())
+    }
+
+    /// Internal method to send requests
+    async fn send_request_internal(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<Response> {
+        let method = Method::from_str(method)
+            .map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
+
+        let mut builder = RequestBuilder::new(method, path.to_string());
+        
+        if let Some(json_body) = body {
+            builder = builder.json(json_body)?;
+        }
+
+        let request = builder.build()?;
+
+        // Execute with timeout
+        let result = tokio::time::timeout(timeout, async {
+            let mut connection = self.get_connection().await?;
+            
+            match &mut connection {
+                Either::Pool(conn) => {
+                    if let Some(stream) = conn.stream() {
+                        send_request(stream, request).await
+                    } else {
+                        Err(KodeBridgeError::connection("Pooled connection is invalid"))
+                    }
+                }
+                Either::Direct(stream) => {
+                    send_request(stream, request).await
+                }
+            }
+        }).await;
+
+        match result {
+            Ok(response) => response,
+            Err(_) => Err(KodeBridgeError::timeout(timeout.as_millis() as u64)),
+        }
+    }
+
+    /// GET request
+    pub fn get(&self, path: &str) -> HttpRequestBuilder<'_> {
+        HttpRequestBuilder::new(self, Method::GET, path)
+    }
+
+    /// POST request
+    pub fn post(&self, path: &str) -> HttpRequestBuilder<'_> {
+        HttpRequestBuilder::new(self, Method::POST, path)
+    }
+
+    /// PUT request
+    pub fn put(&self, path: &str) -> HttpRequestBuilder<'_> {
+        HttpRequestBuilder::new(self, Method::PUT, path)
+    }
+
+    /// DELETE request
+    pub fn delete(&self, path: &str) -> HttpRequestBuilder<'_> {
+        HttpRequestBuilder::new(self, Method::DELETE, path)
+    }
+
+    /// PATCH request
+    pub fn patch(&self, path: &str) -> HttpRequestBuilder<'_> {
+        HttpRequestBuilder::new(self, Method::PATCH, path)
+    }
+
+    /// HEAD request
+    pub fn head(&self, path: &str) -> HttpRequestBuilder<'_> {
+        HttpRequestBuilder::new(self, Method::HEAD, path)
+    }
+
+    /// OPTIONS request
+    pub fn options(&self, path: &str) -> HttpRequestBuilder<'_> {
+        HttpRequestBuilder::new(self, Method::OPTIONS, path)
+    }
+
+    /// Get pool statistics (if pooling is enabled)
+    pub fn pool_stats(&self) -> Option<crate::pool::PoolStats> {
+        self.pool.as_ref().map(|p| p.stats())
+    }
+
+    /// Close the client and clean up resources
+    pub fn close(&self) {
+        if let Some(ref pool) = self.pool {
+            pool.close();
+        }
     }
 }
 
 impl<'a> HttpRequestBuilder<'a> {
-    fn new(client: &'a IpcHttpClient, method: &str, path: &str) -> Self {
+    fn new(client: &'a IpcHttpClient, method: Method, path: &str) -> Self {
         Self {
             client,
-            method: method.to_string(),
+            method,
             path: path.to_string(),
             body: None,
             timeout: None,
+            headers: Vec::new(),
         }
     }
 
-    /// Set request body as JSON
-    pub fn json(mut self, body: &Value) -> Self {
+    /// Set JSON body
+    pub fn json_body(mut self, body: &Value) -> Self {
         self.body = Some(body.clone());
         self
     }
 
-    /// Set request body from serializable object
-    pub fn json_body<T>(mut self, body: &T) -> AnyResult<Self>
-    where
-        T: serde::Serialize,
-    {
-        self.body = Some(serde_json::to_value(body)?);
-        Ok(self)
-    }
-
-    /// Set request timeout
+    /// Set custom timeout
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
 
-    /// Execute the request and return enhanced response
-    pub async fn send(self) -> AnyResult<HttpResponse> {
-        let response = self
-            .client
-            .request_raw(&self.method, &self.path, self.body.as_ref())
-            .await?;
-        Ok(HttpResponse::new(response))
-    }
-
-    /// Execute request and directly get JSON result
-    pub async fn json_result<T>(self) -> AnyResult<T>
+    /// Add custom header
+    pub fn header<K, V>(mut self, key: K, value: V) -> Self
     where
-        T: DeserializeOwned,
+        K: Into<String>,
+        V: Into<String>,
     {
-        let response = self.send().await?;
-        response.json()
+        self.headers.push((key.into(), value.into()));
+        self
     }
 
-    /// Execute request and get response text
-    pub async fn text(self) -> AnyResult<String> {
-        let response = self.send().await?;
-        Ok(response.text().to_string())
-    }
-
-    /// Execute request and get JSON value
-    pub async fn json_value(self) -> AnyResult<Value> {
-        let response = self.send().await?;
-        response.json_value()
+    /// Send the request
+    pub async fn send(self) -> Result<HttpResponse> {
+        let timeout = self.timeout.unwrap_or(self.client.config.default_timeout);
+        let response = self.client.send_request_internal(
+            self.method.as_str(),
+            &self.path,
+            self.body.as_ref(),
+            timeout,
+        ).await?;
+        
+        Ok(HttpResponse::new(response))
     }
 }
 
-impl IpcHttpClient {
-    /// Create a new IPC HTTP client with the given socket/named pipe path
-    ///
-    /// # Arguments
-    /// * `path` - The path to the socket (Unix) or named pipe (Windows)
-    pub fn new<P: AsRef<Path>>(path: P) -> AnyResult<Self> {
-        let name = path.as_ref().to_fs_name::<GenericFilePath>()?.into_owned();
-        Ok(Self {
-            name,
-            default_timeout: Duration::from_secs(30), // Default 30 seconds timeout
-        })
-    }
+/// Helper enum for connection types
+enum Either<A, B> {
+    Pool(A),
+    Direct(B),
+}
 
-    /// Create a new client with custom default timeout
-    pub fn with_timeout<P: AsRef<Path>>(path: P, timeout: Duration) -> AnyResult<Self> {
-        let name = path.as_ref().to_fs_name::<GenericFilePath>()?.into_owned();
-        Ok(Self {
-            name,
-            default_timeout: timeout,
-        })
-    }
-
-    /// HTTP-like GET request
-    pub fn get(&self, path: &str) -> HttpRequestBuilder {
-        HttpRequestBuilder::new(self, "GET", path)
-    }
-
-    /// HTTP-like POST request
-    pub fn post(&self, path: &str) -> HttpRequestBuilder {
-        HttpRequestBuilder::new(self, "POST", path)
-    }
-
-    /// HTTP-like PUT request
-    pub fn put(&self, path: &str) -> HttpRequestBuilder {
-        HttpRequestBuilder::new(self, "PUT", path)
-    }
-
-    /// HTTP-like DELETE request
-    pub fn delete(&self, path: &str) -> HttpRequestBuilder {
-        HttpRequestBuilder::new(self, "DELETE", path)
-    }
-
-    /// HTTP-like PATCH request
-    pub fn patch(&self, path: &str) -> HttpRequestBuilder {
-        HttpRequestBuilder::new(self, "PATCH", path)
-    }
-
-    /// HTTP-like HEAD request
-    pub fn head(&self, path: &str) -> HttpRequestBuilder {
-        HttpRequestBuilder::new(self, "HEAD", path)
-    }
-
-    /// Generic request with custom method
-    pub fn request(&self, method: &str, path: &str) -> HttpRequestBuilder {
-        HttpRequestBuilder::new(self, method, path)
-    }
-
-    /// Low-level method: Send an HTTP request over the IPC connection
-    ///
-    /// # Arguments
-    /// * `method` - HTTP method (GET, POST, etc.)
-    /// * `path` - Request path
-    /// * `body` - Optional JSON body
-    pub async fn request_raw(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<&Value>,
-    ) -> AnyResult<Response> {
-        let stream = LocalSocketStream::connect(self.name.clone()).await?;
-        http_request(stream, method, path, body).await
-    }
-
-    // =================== Backward Compatible Methods ===================
-
-    /// Convenience method: Send GET request (backward compatible)
-    pub async fn get_simple(&self, path: &str) -> AnyResult<Response> {
-        self.request_raw("GET", path, None).await
-    }
-
-    /// Convenience method: Send POST request (backward compatible)
-    pub async fn post_simple(&self, path: &str, body: &Value) -> AnyResult<Response> {
-        self.request_raw("POST", path, Some(body)).await
-    }
-
-    /// Convenience method: Send PUT request (backward compatible)
-    pub async fn put_simple(&self, path: &str, body: &Value) -> AnyResult<Response> {
-        self.request_raw("PUT", path, Some(body)).await
-    }
-
-    /// Convenience method: Send DELETE request (backward compatible)
-    pub async fn delete_simple(&self, path: &str) -> AnyResult<Response> {
-        self.request_raw("DELETE", path, None).await
-    }
-
-    /// Convenience method: Send PATCH request (backward compatible)
-    pub async fn patch_simple(&self, path: &str, body: &Value) -> AnyResult<Response> {
-        self.request_raw("PATCH", path, Some(body)).await
+impl Drop for IpcHttpClient {
+    fn drop(&mut self) {
+        self.close();
     }
 }

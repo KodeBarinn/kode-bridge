@@ -176,6 +176,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::var("CUSTOM_PIPE").unwrap_or(r"\\.\pipe\default".to_string());
     
     let client = IpcHttpClient::new(&path)?;
+    
+    // Use modern fluent API
+    let response = client
+        .get("/status")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?;
+    
+    // Or use legacy API for backward compatibility
     let response = client.request("GET", "/status", None).await?;
     
     Ok(())

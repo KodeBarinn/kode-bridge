@@ -1,5 +1,6 @@
 use dotenv::dotenv;
-use kode_bridge::{AnyResult, IpcHttpClient};
+use kode_bridge::{Result, IpcHttpClient, ClientConfig};
+use serde_json::json;
 use std::env;
 use std::time::Duration;
 
@@ -18,20 +19,28 @@ pub struct ConfigUpdate {
 }
 
 #[tokio::main]
-async fn main() -> AnyResult<()> {
+async fn main() -> Result<()> {
     dotenv().ok();
     println!("🚀 Elegant HTTP Client Demo");
     println!("===========================");
 
     #[cfg(unix)]
-    let ipc_path = env::var("CUSTOM_SOCK")?;
+    let ipc_path = env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/example.sock".to_string());
     #[cfg(windows)]
-    let ipc_path = env::var("CUSTOM_PIPE")?;
+    let ipc_path = env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\example".to_string());
 
-    // Create client with custom default timeout
-    let client = IpcHttpClient::with_timeout(ipc_path, Duration::from_secs(30))?;
+    // Create client with custom configuration
+    let config = ClientConfig {
+        default_timeout: Duration::from_secs(30),
+        enable_pooling: true,
+        max_retries: 3,
+        retry_delay: Duration::from_millis(100),
+        ..Default::default()
+    };
+    
+    let client = IpcHttpClient::with_config(&ipc_path, config)?;
 
-    println!("📊 Method 1: HTTP-like GET request");
+    println!("📊 Method 1: Modern GET request with fluent API");
 
     // 🎯 Most elegant way: use like reqwest
     let response = client
@@ -45,37 +54,48 @@ async fn main() -> AnyResult<()> {
     println!("✨ Is success: {}", response.is_success());
 
     if response.is_success() {
-        let proxies: serde_json::Value = response.json()?;
-        if let Some(proxies_obj) = proxies.as_object() {
-            println!("🔍 Found {} proxy groups", proxies_obj.len());
+        match response.json_value() {
+            Ok(proxies) => {
+                if let Some(proxies_obj) = proxies.as_object() {
+                    println!("🔍 Found {} proxy groups", proxies_obj.len());
 
-            // Show first 3 proxy groups
-            for (count, (name, info)) in proxies_obj.into_iter().enumerate() {
-                if count >= 3 {
-                    break;
+                    // Show first 3 proxy groups
+                    for (count, (name, info)) in proxies_obj.iter().enumerate() {
+                        if count >= 3 {
+                            break;
+                        }
+                        println!(
+                            "🔗 Proxy group: {} -> {}",
+                            name,
+                            info.get("type").unwrap_or(&serde_json::Value::Null)
+                        );
+                    }
                 }
-                println!(
-                    "🔗 Proxy group: {} -> {}",
-                    name,
-                    info.get("type").unwrap_or(&serde_json::Value::Null)
-                );
             }
+            Err(e) => println!("⚠️ JSON parse error: {}", e),
         }
     }
 
-    println!("\n📊 Method 2: Direct JSON result");
+    println!("\n📊 Method 2: Type-safe JSON handling");
 
-    // 🎯 Direct JSON result
-    let config: serde_json::Value = client
+    // 🎯 Type-safe JSON result
+    let response = client
         .get("/configs")
         .timeout(Duration::from_secs(5))
-        .json_result()
+        .send()
         .await?;
 
-    println!(
-        "✅ Config keys: {:?}",
-        config.as_object().map(|o| o.keys().collect::<Vec<_>>())
-    );
+    if response.is_success() {
+        match response.json::<serde_json::Value>() {
+            Ok(config) => {
+                println!(
+                    "✅ Config keys: {:?}",
+                    config.as_object().map(|o| o.keys().collect::<Vec<_>>())
+                );
+            }
+            Err(e) => println!("⚠️ JSON parse error: {}", e),
+        }
+    }
 
     println!("\n📊 Method 3: POST request with JSON body");
 
@@ -87,7 +107,7 @@ async fn main() -> AnyResult<()> {
 
     let response = client
         .post("/configs")
-        .json_body(&update_data)?
+        .json_body(&json!(update_data))
         .timeout(Duration::from_secs(5))
         .send()
         .await?;
@@ -96,15 +116,15 @@ async fn main() -> AnyResult<()> {
     if response.is_success() {
         println!("✨ Configuration updated successfully!");
     } else if response.is_client_error() {
-        println!("❌ Client error: {}", response.text());
+        println!("❌ Client error: {:?}", response.body());
     } else if response.is_server_error() {
-        println!("💥 Server error: {}", response.text());
+        println!("💥 Server error: {:?}", response.body());
     }
 
     println!("\n📊 Method 4: PUT request with manual JSON");
 
     // 🎯 PUT request with manual JSON construction
-    let proxy_config = serde_json::json!({
+    let proxy_config = json!({
         "name": "DIRECT",
         "type": "direct",
         "udp": true
@@ -112,7 +132,7 @@ async fn main() -> AnyResult<()> {
 
     let response = client
         .put("/proxies/DIRECT")
-        .json(&proxy_config)
+        .json_body(&proxy_config)
         .send()
         .await?;
 
@@ -128,13 +148,13 @@ async fn main() -> AnyResult<()> {
         .await?;
 
     match response.status() {
-        200..=299 => println!("✅ Success: {}", response.text()),
-        400..=499 => println!("❌ Client error {}: {}", response.status(), response.text()),
-        500..=599 => println!("💥 Server error {}: {}", response.status(), response.text()),
+        200..=299 => println!("✅ Success: {:?}", response.body()),
+        400..=499 => println!("❌ Client error {}: {:?}", response.status(), response.body()),
+        500..=599 => println!("💥 Server error {}: {:?}", response.status(), response.body()),
         _ => println!(
-            "🤷 Unknown status {}: {}",
+            "🤷 Unknown status {}: {:?}",
             response.status(),
-            response.text()
+            response.body()
         ),
     }
 
@@ -149,46 +169,55 @@ async fn main() -> AnyResult<()> {
 
     println!("✅ DELETE response status: {}", response.status());
 
-    println!("\n📊 Method 7: Custom HTTP method");
+    println!("\n📊 Method 7: HEAD request");
 
-    // 🎯 Custom HTTP method
+    // 🎯 HEAD request
     let response = client
-        .request("OPTIONS", "/")
+        .head("/")
         .timeout(Duration::from_secs(5))
         .send()
         .await?;
 
-    println!("✅ OPTIONS response status: {}", response.status());
+    println!("✅ HEAD response status: {}", response.status());
 
     println!("\n📊 Method 8: Response inspection");
 
     // 🎯 Response inspection
     let response = client.get("/version").send().await?;
 
-    println!("✅ Headers: {}", response.headers());
+    println!("✅ Headers: {:?}", response.headers());
     println!("✅ Status: {}", response.status());
     println!("✅ Content length: {}", response.content_length());
     println!("✅ Is success: {}", response.is_success());
-    println!("✅ Is error: {}", response.is_error());
+    println!("✅ Is client error: {}", response.is_client_error());
+    println!("✅ Is server error: {}", response.is_server_error());
 
     if response.is_success() {
-        let version: serde_json::Value = response.json()?;
-        println!("🎉 Version info: {version}");
+        match response.json_value() {
+            Ok(version) => println!("🎉 Version info: {}", version),
+            Err(e) => println!("⚠️ JSON parse error: {}", e),
+        }
     }
 
     println!("\n📊 Method 9: Backward compatibility");
 
     // 🎯 Backward compatible methods are still available
-    let response = client.get_simple("/proxies").await?;
+    let response = client.request("GET", "/proxies", None).await?;
     println!("✅ Backward compatible GET status: {}", response.status);
+
+    // Show pool stats
+    if let Some(stats) = client.pool_stats() {
+        println!("\n📊 Connection Pool Stats: {}", stats);
+    }
 
     println!("\n🎯 Benefits of the new HTTP client API:");
     println!("📌 HTTP-like methods: get(), post(), put(), delete(), patch(), head()");
     println!("📌 Method chaining: .json_body().timeout().send()");
-    println!("📌 Type-safe JSON: json_result<T>(), json_body<T>()");
-    println!("📌 Rich response handling: is_success(), is_error(), content_length()");
-    println!("📌 Fluent API: .json().timeout().send()");
-    println!("📌 Error categorization: client_error(), server_error()");
+    println!("📌 Type-safe JSON: json<T>(), json_value()");
+    println!("📌 Rich response handling: is_success(), is_client_error(), content_length()");
+    println!("📌 Fluent API: .json_body().timeout().send()");
+    println!("📌 Error categorization: is_client_error(), is_server_error()");
+    println!("📌 Connection pooling: Built-in connection pool with statistics");
     println!("📌 Backward compatible: old methods still work");
 
     Ok(())
