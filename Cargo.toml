@@ -3,10 +3,16 @@ name = "kode-bridge"
 authors = ["Tunglies"]
 version = "0.1.4"
 edition = "2024"
-description = "Cross-platform Rust library for sending HTTP requests over IPC channels (Unix sockets, planned Windows named pipes)."
+description = "Modern HTTP Over IPC library for Rust with both client and server support (Unix sockets, Windows named pipes)."
 license = "Apache-2.0"
 repository = "https://github.com/KodeBarinn/kode-bridge"
 readme = "README.md"
+
+[features]
+default = ["client"]
+client = []
+server = []
+full = ["client", "server"]
 
 [dependencies]
 interprocess = { version = "2", features = ["tokio"] }
@@ -35,6 +41,9 @@ dotenv = "0.15.0"
 env = "1.0.1"
 criterion = {version = "0.6.0", features = ["async"]}
 async-trait = "0.1.88"
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
 
 [[example]]
 name = "request"
@@ -43,6 +52,16 @@ path = "examples/request.rs"
 [[example]]
 name = "request_large"
 path = "examples/request_large.rs"
+
+[[example]]
+name = "http_server"
+path = "examples/http_server.rs"
+required-features = ["server"]
+
+[[example]]
+name = "stream_server"  
+path = "examples/stream_server.rs"
+required-features = ["server"]
 
 [[bench]]
 name = "bench_version"

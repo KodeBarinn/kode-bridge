@@ -6,7 +6,7 @@
 
 **[中文](./README_CN.md) | English**
 
-**kode-bridge** is a modern Rust library designed for cross-platform (macOS, Linux, Windows) IPC communication. It provides both HTTP-style request/response and real-time streaming capabilities through Unix Domain Sockets or Windows Named Pipes, with a fluent API similar to reqwest.
+**kode-bridge** is a modern Rust library that implements **HTTP Over IPC** for cross-platform (macOS, Linux, Windows) communication. It provides both **client and server** capabilities with elegant HTTP-style request/response and real-time streaming through Unix Domain Sockets or Windows Named Pipes, featuring a fluent API similar to reqwest with comprehensive connection pooling, advanced error handling, and high-performance streaming.
 
 ## ✨ Features
 
@@ -29,10 +29,26 @@
 
 ```toml
 [dependencies]
+# Client only (default)
 kode-bridge = "0.1"
+
+# Server only  
+kode-bridge = { version = "0.1", features = ["server"] }
+
+# Both client and server
+kode-bridge = { version = "0.1", features = ["full"] }
+
+# Required runtime
 tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```
+
+### Available Features
+
+- **`client`** (default) - HTTP and streaming client functionality
+- **`server`** - HTTP and streaming server functionality  
+- **`full`** - Both client and server capabilities
 
 ### Basic Usage
 
@@ -107,7 +123,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Advanced Usage
+### Server Usage
+
+```rust
+use kode_bridge::{IpcHttpServer, Router, HttpResponse, Result};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Create HTTP server with routing
+    let router = Router::new()
+        .get("/health", |_| async move {
+            HttpResponse::json(&json!({"status": "healthy"}))
+        })
+        .post("/api/data", |ctx| async move {
+            let data: serde_json::Value = ctx.json()?;
+            HttpResponse::json(&json!({"received": data}))
+        });
+
+    let mut server = IpcHttpServer::new("/tmp/server.sock")?
+        .router(router);
+    
+    println!("🚀 Server listening on /tmp/server.sock");
+    server.serve().await
+}
+```
+
+### Advanced Client Usage
 
 ```rust
 use kode_bridge::{IpcHttpClient, IpcStreamClient};
