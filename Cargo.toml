@@ -63,6 +63,10 @@ name = "stream_server"
 path = "examples/stream_server.rs"
 required-features = ["server"]
 
+[[example]]
+name = "traffic_monitor"
+path = "examples/traffic_monitor.rs"
+
 [[bench]]
 name = "bench_version"
 path = "benches/bench_version.rs"
