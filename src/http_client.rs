@@ -5,6 +5,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, trace};
@@ -247,42 +248,42 @@ where
     S: AsyncRead + Unpin,
 {
     let mut reader = BufReader::new(stream);
-    let mut buffer = Vec::new();
+    let mut buffer = String::new();
 
-    // Read until we have the complete headers
-    let mut headers_end = None;
+    // Optimization: read the status line at once
+    reader.read_line(&mut buffer).await?;
+    
+    // Continue reading headers
+    let mut headers_buffer = Vec::new();
+    headers_buffer.extend_from_slice(buffer.as_bytes());
+    
+    // Read remaining headers until \r\n\r\n is found
+    let mut line_buffer = String::new();
     loop {
-        let mut line = Vec::new();
-        let n = reader.read_until(b'\n', &mut line).await?;
+        line_buffer.clear();
+        let n = reader.read_line(&mut line_buffer).await?;
         if n == 0 {
             return Err(KodeBridgeError::protocol("Unexpected end of stream"));
         }
-
-        buffer.extend_from_slice(&line);
-
-        // Check for end of headers (\r\n\r\n)
-        if buffer.len() >= 4 {
-            for i in 0..buffer.len() - 3 {
-                if &buffer[i..i + 4] == b"\r\n\r\n" {
-                    headers_end = Some(i + 4);
-                    break;
-                }
-            }
-        }
-
-        if headers_end.is_some() {
+        
+        headers_buffer.extend_from_slice(line_buffer.as_bytes());
+        
+        // Check for empty line (just \r\n)
+        if line_buffer == "\r\n" {
             break;
         }
+        
+        // Prevent headers from being too large
+        if headers_buffer.len() > 16384 {
+            return Err(KodeBridgeError::protocol("HTTP headers too large"));
+        }
     }
-
-    let headers_end = headers_end
-        .ok_or_else(|| KodeBridgeError::protocol("Could not find end of HTTP headers"))?;
 
     // Parse the headers
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut response = httparse::Response::new(&mut headers);
 
-    let status = match response.parse(&buffer[..headers_end])? {
+    let status = match response.parse(&headers_buffer)? {
         httparse::Status::Complete(_) => response.code.unwrap(),
         httparse::Status::Partial => {
             return Err(KodeBridgeError::protocol("Incomplete HTTP response"));
@@ -311,16 +312,31 @@ where
         .map(|s| s.eq_ignore_ascii_case("chunked"))
         .unwrap_or(false);
 
-    // Read body
+    // Read body with optimized handling for empty responses (common in PUT/POST)
     let body = if is_chunked {
         read_chunked_body(&mut reader).await?
     } else if let Some(len) = content_length {
-        read_fixed_body(&mut reader, len).await?
+        if len == 0 {
+            // Empty response, return directly
+            Bytes::new()
+        } else {
+            read_fixed_body(&mut reader, len).await?
+        }
     } else {
-        // Read until EOF
-        let mut body = Vec::new();
-        reader.read_to_end(&mut body).await?;
-        Bytes::from(body)
+        // For responses without Content-Length, set a short timeout
+        // This usually means the server may not send more data
+        match tokio::time::timeout(Duration::from_millis(100), async {
+            let mut body = Vec::new();
+            reader.read_to_end(&mut body).await?;
+            Ok::<_, std::io::Error>(Bytes::from(body))
+        }).await {
+            Ok(Ok(body)) => body,
+            Ok(Err(e)) => return Err(KodeBridgeError::from(e)),
+            Err(_) => {
+                // Timeout, assume no more data
+                Bytes::new()
+            }
+        }
     };
 
     Ok(Response::new(
