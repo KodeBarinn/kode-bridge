@@ -39,7 +39,7 @@ toml = "0.8"
 [dev-dependencies]
 dotenv = "0.15.0"
 env = "1.0.1"
-criterion = {version = "0.6.0", features = ["async"]}
+criterion = {version = "0.7.0", features = ["async"]}
 async-trait = "0.1.88"
 tracing-subscriber = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
