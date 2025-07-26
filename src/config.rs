@@ -36,12 +36,12 @@ pub struct ClientGlobalConfig {
 impl Default for ClientGlobalConfig {
     fn default() -> Self {
         Self {
-            default_timeout_ms: 30_000,
+            default_timeout_ms: 10_000, // Reduce default timeout to 10 seconds
             enable_pooling: true,
             pool: PoolConfig::default(),
-            max_retries: 3,
-            retry_delay_ms: 100,
-            connection_timeout_ms: 10_000,
+            max_retries: 5,               // Increase retry attempts
+            retry_delay_ms: 50,           // Reduce retry delay
+            connection_timeout_ms: 5_000, // Reduce connection timeout
         }
     }
 }

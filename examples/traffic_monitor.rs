@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
     dotenv().ok();
 
     let client =
-        IpcStreamClient::new(&env::var("CUSTOM_SOCK").unwrap_or("/tmp/example.sock".into()))?;
+        IpcStreamClient::new(env::var("CUSTOM_SOCK").unwrap_or("/tmp/example.sock".into()))?;
 
     // Test connection
     if client

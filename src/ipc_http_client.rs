@@ -26,16 +26,22 @@ pub struct ClientConfig {
     /// Retry configuration
     pub max_retries: usize,
     pub retry_delay: Duration,
+    /// Concurrent request limit
+    pub max_concurrent_requests: usize,
+    /// Rate limiting: max requests per second
+    pub max_requests_per_second: Option<f64>,
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            default_timeout: Duration::from_secs(30),
+            default_timeout: Duration::from_secs(10), // Reduce default timeout
             pool_config: PoolConfig::default(),
             enable_pooling: true,
-            max_retries: 3,
-            retry_delay: Duration::from_millis(100),
+            max_retries: 5,                         // Increase retry attempts
+            retry_delay: Duration::from_millis(50), // Reduce retry delay
+            max_concurrent_requests: 8,             // Limit concurrent requests
+            max_requests_per_second: Some(10.0),    // Limit requests per second
         }
     }
 }
@@ -218,7 +224,7 @@ impl IpcHttpClient {
         Ok(response.to_legacy())
     }
 
-    /// Internal method to send requests
+    /// Internal method to send requests with enhanced retry logic
     async fn send_request_internal(
         &self,
         method: &str,
@@ -237,27 +243,75 @@ impl IpcHttpClient {
 
         let request = builder.build()?;
 
-        // Execute with timeout
-        let result = tokio::time::timeout(timeout, async {
-            let mut connection = self.get_connection().await?;
+        // Use exponential backoff retry mechanism
+        let mut last_error = None;
+        let mut delay = self.config.retry_delay;
 
-            match &mut connection {
-                Either::Pool(conn) => {
-                    if let Some(stream) = conn.stream() {
-                        send_request(stream, request).await
+        for attempt in 0..=self.config.max_retries {
+            if attempt > 0 {
+                // Add random jitter to avoid thundering herd
+                let jitter = delay.as_millis() as f64 * 0.1 * rand::random::<f64>();
+                let jittered_delay = delay + Duration::from_millis(jitter as u64);
+                tokio::time::sleep(jittered_delay).await;
+
+                // Exponential backoff, max 2 seconds
+                delay = std::cmp::min(delay * 2, Duration::from_millis(2000));
+            }
+
+            // Execute with timeout
+            let result = tokio::time::timeout(timeout, async {
+                let mut connection = self.get_connection().await?;
+
+                match &mut connection {
+                    Either::Pool(conn) => {
+                        if let Some(stream) = conn.stream() {
+                            send_request(stream, request.clone()).await
+                        } else {
+                            Err(KodeBridgeError::connection("Pooled connection is invalid"))
+                        }
+                    }
+                    Either::Direct(stream) => send_request(stream, request.clone()).await,
+                }
+            })
+            .await;
+
+            match result {
+                Ok(Ok(response)) => return Ok(response),
+                Ok(Err(e)) => {
+                    // Determine if retry should be attempted
+                    if attempt < self.config.max_retries && self.should_retry(&e) {
+                        trace!("Request attempt {} failed, retrying: {}", attempt + 1, e);
+                        last_error = Some(e);
+                        continue;
                     } else {
-                        Err(KodeBridgeError::connection("Pooled connection is invalid"))
+                        return Err(e);
                     }
                 }
-                Either::Direct(stream) => send_request(stream, request).await,
+                Err(_) => {
+                    // Timeout error
+                    let timeout_err = KodeBridgeError::timeout(timeout.as_millis() as u64);
+                    if attempt < self.config.max_retries {
+                        trace!("Request attempt {} timed out, retrying", attempt + 1);
+                        last_error = Some(timeout_err);
+                        continue;
+                    } else {
+                        return Err(timeout_err);
+                    }
+                }
             }
-        })
-        .await;
-
-        match result {
-            Ok(response) => response,
-            Err(_) => Err(KodeBridgeError::timeout(timeout.as_millis() as u64)),
         }
+
+        Err(last_error.unwrap_or_else(|| KodeBridgeError::custom("Max retries exceeded")))
+    }
+
+    /// Determine if an error should trigger a retry
+    fn should_retry(&self, error: &KodeBridgeError) -> bool {
+        matches!(
+            error,
+            KodeBridgeError::Connection { .. }
+                | KodeBridgeError::Timeout { .. }
+                | KodeBridgeError::Io(_)
+        )
     }
 
     /// GET request

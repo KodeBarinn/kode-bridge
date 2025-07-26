@@ -252,11 +252,11 @@ where
 
     // Optimization: read the status line at once
     reader.read_line(&mut buffer).await?;
-    
+
     // Continue reading headers
     let mut headers_buffer = Vec::new();
     headers_buffer.extend_from_slice(buffer.as_bytes());
-    
+
     // Read remaining headers until \r\n\r\n is found
     let mut line_buffer = String::new();
     loop {
@@ -265,14 +265,14 @@ where
         if n == 0 {
             return Err(KodeBridgeError::protocol("Unexpected end of stream"));
         }
-        
+
         headers_buffer.extend_from_slice(line_buffer.as_bytes());
-        
+
         // Check for empty line (just \r\n)
         if line_buffer == "\r\n" {
             break;
         }
-        
+
         // Prevent headers from being too large
         if headers_buffer.len() > 16384 {
             return Err(KodeBridgeError::protocol("HTTP headers too large"));
@@ -329,7 +329,9 @@ where
             let mut body = Vec::new();
             reader.read_to_end(&mut body).await?;
             Ok::<_, std::io::Error>(Bytes::from(body))
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(body)) => body,
             Ok(Err(e)) => return Err(KodeBridgeError::from(e)),
             Err(_) => {

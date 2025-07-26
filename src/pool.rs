@@ -24,17 +24,23 @@ pub struct PoolConfig {
     pub retry_delay_ms: u64,
     /// Maximum number of retry attempts
     pub max_retries: usize,
+    /// Concurrent request limit
+    pub max_concurrent_requests: usize,
+    /// Rate limiting: max requests per second
+    pub max_requests_per_second: Option<f64>,
 }
 
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_size: 10,
-            min_idle: 2,
+            max_size: 20,              // Increase connection pool size to support more concurrency
+            min_idle: 5,               // Maintain more idle connections
             max_idle_time_ms: 300_000, // 5 minutes
-            connection_timeout_ms: 30_000,
-            retry_delay_ms: 100,
-            max_retries: 3,
+            connection_timeout_ms: 10_000, // Reduce connection timeout
+            retry_delay_ms: 50,        // Reduce retry delay
+            max_retries: 5,            // Increase retry attempts
+            max_concurrent_requests: 8,
+            max_requests_per_second: Some(10.0),
         }
     }
 }
@@ -130,10 +136,13 @@ impl ConnectionPoolInner {
 
     async fn create_connection(&self) -> Result<LocalSocketStream> {
         let mut last_error = None;
+        let mut delay = self.config.retry_delay();
 
         for attempt in 0..self.config.max_retries {
             if attempt > 0 {
-                tokio::time::sleep(self.config.retry_delay()).await;
+                // Exponential backoff retry delay
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay * 2, Duration::from_millis(1000));
             }
 
             match LocalSocketStream::connect(self.name.clone()).await {
@@ -233,6 +242,29 @@ impl ConnectionPool {
     pub async fn get_connection(&self) -> Result<PooledConnection> {
         let stream = self.inner.get_connection_with_timeout().await?;
         Ok(PooledConnection::new(stream, self.inner.clone()))
+    }
+
+    /// Get multiple connections for concurrent operations
+    pub async fn get_connections(&self, count: usize) -> Result<Vec<PooledConnection>> {
+        let mut connections = Vec::with_capacity(count);
+
+        // Use semaphore to control concurrent acquisition
+        let mut tasks = Vec::new();
+        for _ in 0..count {
+            let pool = self.clone();
+            tasks.push(tokio::spawn(async move { pool.get_connection().await }));
+        }
+
+        // Wait for all connection acquisitions to complete
+        for task in tasks {
+            match task.await {
+                Ok(Ok(conn)) => connections.push(conn),
+                Ok(Err(e)) => return Err(e),
+                Err(e) => return Err(KodeBridgeError::custom(format!("Task failed: {}", e))),
+            }
+        }
+
+        Ok(connections)
     }
 
     /// Get pool statistics

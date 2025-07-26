@@ -50,6 +50,7 @@ async fn main() -> Result<()> {
         },
         max_retries: 2,
         retry_delay: Duration::from_millis(500),
+        ..Default::default()
     };
 
     let client = IpcHttpClient::with_config(&ipc_path, config)?;

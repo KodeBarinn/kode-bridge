@@ -68,11 +68,11 @@ async fn main() -> Result<()> {
         })
         // GET /health - Health check endpoint
         .get("/health", |_ctx| async move {
-            Ok(HttpResponse::json(&json!({
+            HttpResponse::json(&json!({
                 "status": "healthy",
                 "timestamp": chrono::Utc::now().to_rfc3339(),
                 "uptime": "available"
-            }))?)
+            }))
         })
         // GET /users - List users (mock data)
         .get("/users", |_ctx| async move {
