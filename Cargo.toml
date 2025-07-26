@@ -29,7 +29,7 @@ bytes = "1.10.1"
 tracing = "0.1"
 parking_lot = "0.12"
 pin-project-lite = "0.2"
-toml = "0.8"
+toml = "0.9"
 rand = "0.8"
 
 [dev-dependencies]
