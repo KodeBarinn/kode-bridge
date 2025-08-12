@@ -1,0 +1,26 @@
+{
+  "extends": ["config:recommended", ":disableDependencyDashboard"],
+  "baseBranches": ["dev"],
+  "enabledManagers": ["cargo"],
+  "labels": ["dependencies"],
+  "ignorePaths": [
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "**/crate/**",
+    "shared/**"
+  ],
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "semanticCommitType": "chore",
+      "matchPackageNames": ["*"]
+    },
+    {
+      "description": "Group all cargo dependencies into a single PR",
+      "matchManagers": ["cargo"],
+      "groupName": "cargo dependencies"
+    }
+  ]
+}
