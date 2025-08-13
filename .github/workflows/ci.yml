@@ -19,7 +19,7 @@ jobs:
         rust:
           - stable
           - beta
-          - 1.70.0  # MSRV
+          - 1.76.0  # MSRV that supports Cargo.lock v4
     steps:
     - uses: actions/checkout@v4
     
@@ -78,7 +78,10 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
     
     - name: Run cross-platform tests
-      run: make test
+      run: |
+        # Ensure we can build and test on this platform
+        cargo check --all-features
+        make test
 
   docs:
     name: Documentation

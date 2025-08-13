@@ -9,7 +9,7 @@ repository = "https://github.com/KodeBarinn/kode-bridge"
 readme = "README.md"
 keywords = ["http", "ipc", "bridge", "async", "performance"]
 categories = ["network-programming", "web-programming", "api-bindings", "asynchronous"]
-rust-version = "1.70"
+rust-version = "1.76"
 
 [features]
 default = ["client"]
