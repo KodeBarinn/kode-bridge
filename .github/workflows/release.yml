@@ -37,68 +37,10 @@ jobs:
     - name: Build release
       run: make build
 
-  # Build release artifacts for different platforms
-  build-release:
-    name: Build Release Artifacts
-    needs: pre-release-checks
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            name: linux-x86_64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            name: windows-x86_64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            name: macos-x86_64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            name: macos-aarch64
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: 1.87.0
-        targets: ${{ matrix.target }}
-    
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Build release binary
-      run: cargo build --release --target ${{ matrix.target }} --all-features
-    
-    - name: Create release archive
-      shell: bash
-      run: |
-        cd target/${{ matrix.target }}/release
-        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-          7z a ../../../kode-bridge-${{ matrix.name }}.zip kode-bridge.exe
-        else
-          tar czvf ../../../kode-bridge-${{ matrix.name }}.tar.gz kode-bridge
-        fi
-    
-    - name: Upload release archive
-      uses: actions/upload-artifact@v4
-      with:
-        name: kode-bridge-${{ matrix.name }}
-        path: kode-bridge-${{ matrix.name }}.*
-
   # Publish to crates.io
   publish-crate:
     name: Publish to crates.io
-    needs: [pre-release-checks, build-release]
+    needs: pre-release-checks
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -128,17 +70,12 @@ jobs:
   # Create GitHub release
   github-release:
     name: Create GitHub Release
-    needs: [pre-release-checks, build-release, publish-crate]
+    needs: [pre-release-checks, publish-crate]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    
-    - name: Download all release artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
     
     - name: Get tag name
       id: tag
@@ -186,7 +123,6 @@ jobs:
         body_path: release_notes.md
         draft: false
         prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
-        files: artifacts/*/*
         token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Update cargo installation instructions
