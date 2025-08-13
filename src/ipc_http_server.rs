@@ -908,7 +908,7 @@ pub mod urlencoding {
 
     impl std::error::Error for DecodeError {}
 
-    pub fn decode(input: &str) -> Result<Cow<str>, DecodeError> {
+    pub fn decode(input: &str) -> Result<Cow<'_, str>, DecodeError> {
         // Safe URL decoding implementation with proper UTF-8 handling
         if !input.contains('%') && !input.contains('+') {
             return Ok(Cow::Borrowed(input));

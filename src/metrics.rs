@@ -271,7 +271,7 @@ impl MetricsCollector {
     }
 
     /// Record a request start
-    pub fn request_start(&self, method: &str) -> RequestTracker {
+    pub fn request_start(&self, method: &str) -> RequestTracker<'_> {
         self.requests.total_requests.fetch_add(1, Ordering::Relaxed);
         self.requests
             .active_requests
