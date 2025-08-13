@@ -1,5 +1,5 @@
 use crate::errors::KodeBridgeError;
-use rand::{rngs::StdRng, random_range, SeedableRng};
+use rand::{random_range, rngs::StdRng, SeedableRng};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 

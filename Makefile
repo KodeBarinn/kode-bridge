@@ -1,5 +1,5 @@
 # Production-grade Rust project management
-.PHONY: check lint format test build clean doc help
+.PHONY: check lint format test build clean doc doc-open help
 
 # Default target
 all: check
@@ -74,6 +74,11 @@ clean:
 
 # Generate documentation
 doc:
+	@echo "📚 Generating documentation..."
+	cargo doc --all-features --no-deps
+
+# Generate and open documentation  
+doc-open:
 	@echo "📚 Generating documentation..."
 	cargo doc --all-features --no-deps --open
 

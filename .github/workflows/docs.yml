@@ -1,0 +1,98 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'README.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'README.md'
+      - 'docs/**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Build documentation
+      run: make doc
+    
+    - name: Check for broken doc links
+      run: |
+        cargo doc --all-features --no-deps 2>&1 | tee doc-output.log
+        ! grep -E "(warning|error):" doc-output.log
+    
+    - name: Deploy to GitHub Pages (main branch only)
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./target/doc
+        cname: kode-bridge.docs.example.com  # Optional: your custom domain
+
+  doc-tests:
+    name: Documentation Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-doctest-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Run doc tests
+      run: cargo test --doc --all-features
+    
+    - name: Test examples in README
+      run: |
+        # Extract and test code blocks from README.md
+        # This is a placeholder - implement based on your README structure
+        echo "Testing README examples..."
+
+  spell-check:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Spell Check
+      uses: streetsidesoftware/cspell-action@v6
+      with:
+        files: |
+          README.md
+          CHANGELOG.md
+          src/**/*.rs
+          docs/**/*.md
+        config: .cspell.json

@@ -1,0 +1,193 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Run all quality checks before releasing
+  pre-release-checks:
+    name: Pre-Release Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Run all production checks
+      run: make check
+    
+    - name: Build release
+      run: make build
+
+  # Build release artifacts for different platforms
+  build-release:
+    name: Build Release Artifacts
+    needs: pre-release-checks
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-aarch64
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+    
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Build release binary
+      run: cargo build --release --target ${{ matrix.target }} --all-features
+    
+    - name: Create release archive
+      shell: bash
+      run: |
+        cd target/${{ matrix.target }}/release
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          7z a ../../../kode-bridge-${{ matrix.name }}.zip kode-bridge.exe
+        else
+          tar czvf ../../../kode-bridge-${{ matrix.name }}.tar.gz kode-bridge
+        fi
+    
+    - name: Upload release archive
+      uses: actions/upload-artifact@v4
+      with:
+        name: kode-bridge-${{ matrix.name }}
+        path: kode-bridge-${{ matrix.name }}.*
+
+  # Publish to crates.io
+  publish-crate:
+    name: Publish to crates.io
+    needs: [pre-release-checks, build-release]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Verify package can be published
+      run: cargo publish --dry-run --all-features
+    
+    - name: Publish to crates.io
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      run: cargo publish --all-features
+
+  # Create GitHub release
+  github-release:
+    name: Create GitHub Release
+    needs: [pre-release-checks, build-release, publish-crate]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Download all release artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+    
+    - name: Get tag name
+      id: tag
+      run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+    
+    - name: Extract changelog entry
+      id: changelog
+      run: |
+        # Extract the changelog section for this version from CHANGELOG.md
+        VERSION=$(echo "${{ steps.tag.outputs.tag }}" | sed 's/^v//')
+        
+        # Use awk to extract the section between the current version and the next version
+        awk -v version="$VERSION" '
+        BEGIN { found = 0; printing = 0 }
+        /^## \[/ {
+          if (found && printing) {
+            exit
+          }
+          if ($0 ~ "\\[" version "\\]") {
+            found = 1
+            printing = 1
+            next
+          }
+        }
+        printing && found { print }
+        ' CHANGELOG.md > release_notes.md
+        
+        # If no specific changelog entry found, create a generic one
+        if [ ! -s release_notes.md ]; then
+          echo "Release ${{ steps.tag.outputs.tag }}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "See [CHANGELOG.md](CHANGELOG.md) for details." >> release_notes.md
+        fi
+        
+        # Show what we extracted for debugging
+        echo "=== Extracted Release Notes ==="
+        cat release_notes.md
+        echo "=============================="
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: Release ${{ steps.tag.outputs.tag }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+        files: artifacts/*/*
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Update cargo installation instructions
+      run: |
+        echo "✅ Release ${{ steps.tag.outputs.tag }} published successfully!"
+        echo "📦 Install with: cargo install kode-bridge"
+        echo "🔗 View on crates.io: https://crates.io/crates/kode-bridge"
+        echo "📋 Release notes: https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.tag }}"
