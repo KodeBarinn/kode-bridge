@@ -1,7 +1,9 @@
+use crate::buffer_pool::global_pools;
 use crate::errors::{KodeBridgeError, Result};
+use crate::parser_cache::global_parser_cache;
 use bytes::{Bytes, BytesMut};
-use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header};
-use serde::{Serialize, de::DeserializeOwned};
+use http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -149,21 +151,6 @@ impl RequestBuilder {
         }
     }
 
-    /// Add a header
-    #[allow(dead_code)]
-    pub fn header<K, V>(mut self, key: K, value: V) -> Result<Self>
-    where
-        HeaderName: TryFrom<K>,
-        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-        HeaderValue: TryFrom<V>,
-        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
-    {
-        let key = HeaderName::try_from(key).map_err(|e| KodeBridgeError::Http(e.into()))?;
-        let value = HeaderValue::try_from(value).map_err(|e| KodeBridgeError::Http(e.into()))?;
-        self.headers.insert(key, value);
-        Ok(self)
-    }
-
     /// Set JSON body
     pub fn json<T>(mut self, body: &T) -> Result<Self>
     where
@@ -180,39 +167,6 @@ impl RequestBuilder {
                 .map_err(|e| KodeBridgeError::Http(e.into()))?,
         );
         self.body = Some(Bytes::from(json_bytes));
-        Ok(self)
-    }
-
-    /// Set text body
-    #[allow(dead_code)]
-    pub fn text<T: AsRef<str>>(mut self, body: T) -> Result<Self> {
-        let text_bytes = body.as_ref().as_bytes().to_vec();
-        self.headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("text/plain; charset=utf-8"),
-        );
-        self.headers.insert(
-            header::CONTENT_LENGTH,
-            HeaderValue::from_str(&text_bytes.len().to_string())
-                .map_err(|e| KodeBridgeError::Http(e.into()))?,
-        );
-        self.body = Some(Bytes::from(text_bytes));
-        Ok(self)
-    }
-
-    /// Set raw bytes body
-    #[allow(dead_code)]
-    pub fn bytes(mut self, body: Bytes) -> Result<Self> {
-        self.headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/octet-stream"),
-        );
-        self.headers.insert(
-            header::CONTENT_LENGTH,
-            HeaderValue::from_str(&body.len().to_string())
-                .map_err(|e| KodeBridgeError::Http(e.into()))?,
-        );
-        self.body = Some(body);
         Ok(self)
     }
 
@@ -279,25 +233,20 @@ where
         }
     }
 
-    // Parse the headers
-    let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut response = httparse::Response::new(&mut headers);
-
-    let status = match response.parse(&headers_buffer)? {
-        httparse::Status::Complete(_) => response.code.unwrap(),
-        httparse::Status::Partial => {
-            return Err(KodeBridgeError::protocol("Incomplete HTTP response"));
-        }
-    };
+    // Use cached parser for better performance
+    let mut parser = global_parser_cache().get();
+    let (status, parsed_headers) = parser.parse_response(&headers_buffer).map_err(|e| {
+        KodeBridgeError::protocol(format!("Failed to parse HTTP response: {:?}", e))
+    })?;
 
     // Build HeaderMap
     let mut header_map = HeaderMap::new();
-    for header in response.headers {
-        let name =
-            HeaderName::from_str(header.name).map_err(|e| KodeBridgeError::Http(e.into()))?;
-        let value =
-            HeaderValue::from_bytes(header.value).map_err(|e| KodeBridgeError::Http(e.into()))?;
-        header_map.insert(name, value);
+    for (name, value) in parsed_headers {
+        let header_name =
+            HeaderName::from_str(&name).map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let header_value =
+            HeaderValue::from_str(&value).map_err(|e| KodeBridgeError::Http(e.into()))?;
+        header_map.insert(header_name, header_value);
     }
 
     // Determine body length
@@ -323,22 +272,8 @@ where
             read_fixed_body(&mut reader, len).await?
         }
     } else {
-        // For responses without Content-Length, set a short timeout
-        // This usually means the server may not send more data
-        match tokio::time::timeout(Duration::from_millis(100), async {
-            let mut body = Vec::new();
-            reader.read_to_end(&mut body).await?;
-            Ok::<_, std::io::Error>(Bytes::from(body))
-        })
-        .await
-        {
-            Ok(Ok(body)) => body,
-            Ok(Err(e)) => return Err(KodeBridgeError::from(e)),
-            Err(_) => {
-                // Timeout, assume no more data
-                Bytes::new()
-            }
-        }
+        // For responses without Content-Length, use adaptive reading
+        read_until_end_adaptive(&mut reader).await?
     };
 
     Ok(Response::new(
@@ -353,7 +288,7 @@ async fn read_chunked_body<R>(reader: &mut BufReader<R>) -> Result<Bytes>
 where
     R: AsyncRead + Unpin,
 {
-    let mut body = BytesMut::new();
+    let mut body_buffer = global_pools().get_large();
 
     loop {
         // Read chunk size line
@@ -379,14 +314,14 @@ where
         // Read chunk data
         let mut chunk = vec![0u8; chunk_size];
         reader.read_exact(&mut chunk).await?;
-        body.extend_from_slice(&chunk);
+        body_buffer.extend_from_slice(&chunk);
 
         // Read trailing CRLF
         let mut crlf = [0u8; 2];
         reader.read_exact(&mut crlf).await?;
     }
 
-    Ok(body.freeze())
+    Ok(Bytes::copy_from_slice(body_buffer.as_slice()))
 }
 
 async fn read_fixed_body<R>(reader: &mut BufReader<R>, len: usize) -> Result<Bytes>
@@ -396,6 +331,53 @@ where
     let mut body = vec![0u8; len];
     reader.read_exact(&mut body).await?;
     Ok(Bytes::from(body))
+}
+
+async fn read_until_end_adaptive<R>(reader: &mut BufReader<R>) -> Result<Bytes>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut body_buffer = global_pools().get_medium();
+    let mut read_buffer = [0u8; 4096];
+    let mut consecutive_empty_reads = 0;
+
+    loop {
+        // Use progressively longer timeouts to avoid premature termination
+        let timeout_duration =
+            Duration::from_millis(100 + (consecutive_empty_reads * 50).min(1000));
+
+        match tokio::time::timeout(timeout_duration, reader.read(&mut read_buffer)).await {
+            Ok(Ok(0)) => {
+                // EOF reached
+                break;
+            }
+            Ok(Ok(n)) => {
+                body_buffer.extend_from_slice(&read_buffer[..n]);
+                consecutive_empty_reads = 0;
+            }
+            Ok(Err(e)) => {
+                return Err(KodeBridgeError::from(e));
+            }
+            Err(_) => {
+                // Timeout occurred
+                consecutive_empty_reads += 1;
+                if consecutive_empty_reads >= 3 {
+                    // After 3 consecutive timeouts, assume no more data
+                    break;
+                }
+                continue;
+            }
+        }
+
+        // Safety limit to prevent unbounded memory usage
+        if body_buffer.len() > 64 * 1024 * 1024 {
+            // 64MB limit
+            return Err(KodeBridgeError::protocol("Response body too large"));
+        }
+    }
+
+    // Convert pooled buffer to Bytes for return
+    Ok(Bytes::copy_from_slice(body_buffer.as_slice()))
 }
 
 /// Send HTTP request and parse response
@@ -419,27 +401,4 @@ where
     );
 
     Ok(response)
-}
-
-/// Convenience function for making HTTP requests
-#[allow(dead_code)]
-pub async fn http_request<S>(
-    stream: S,
-    method: &str,
-    path: &str,
-    body: Option<&Value>,
-) -> Result<Response>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let method = Method::from_str(method).map_err(|e| KodeBridgeError::Http(e.into()))?;
-
-    let mut builder = RequestBuilder::new(method, path.to_string());
-
-    if let Some(json_body) = body {
-        builder = builder.json(json_body)?;
-    }
-
-    let request = builder.build()?;
-    send_request(stream, request).await
 }

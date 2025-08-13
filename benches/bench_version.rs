@@ -17,12 +17,13 @@
 /// # Windows  
 /// CUSTOM_PIPE=\\.\pipe\my_pipe cargo bench
 /// ```
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use std::env;
 use tokio::runtime::Runtime;
 
-use criterion::{Criterion, criterion_group, criterion_main};
-use kode_bridge::{IpcHttpClient, Response};
+use criterion::{criterion_group, criterion_main, Criterion};
+use kode_bridge::http_client::Response;
+use kode_bridge::IpcHttpClient;
 
 async fn bench_version_once(client: &IpcHttpClient) -> Response {
     client.get("/version").send().await.unwrap().into_inner()

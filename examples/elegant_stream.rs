@@ -1,4 +1,4 @@
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use kode_bridge::{IpcStreamClient, Result, StreamClientConfig};
 use std::env;
 use std::time::Duration;

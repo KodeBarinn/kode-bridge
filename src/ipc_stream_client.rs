@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::errors::{KodeBridgeError, Result};
 use crate::http_client::RequestBuilder;
-use crate::stream_client::{StreamingResponse, send_streaming_request};
+use crate::stream_client::{send_streaming_request, StreamingResponse};
 use http::Method;
 use std::str::FromStr;
 use tracing::{debug, trace};
@@ -189,7 +189,9 @@ impl IpcStreamClient {
         Err(KodeBridgeError::connection(format!(
             "Failed to create streaming connection after {} attempts: {}",
             self.config.max_retries,
-            last_error.unwrap()
+            last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string())
         )))
     }
 

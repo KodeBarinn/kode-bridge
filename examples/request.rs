@@ -19,7 +19,7 @@
 /// # Windows  
 /// CUSTOM_PIPE=\\.\pipe\my_pipe
 /// ```
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use kode_bridge::{IpcHttpClient, Result};
 use std::env;
 use std::time::Duration;

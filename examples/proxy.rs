@@ -1,4 +1,4 @@
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use kode_bridge::{ClientConfig, IpcHttpClient, KodeBridgeError, Result};
 use serde::{Deserialize, Serialize};
 use std::env;

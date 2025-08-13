@@ -1,0 +1,36 @@
+# Clippy configuration for production-ready code
+# https://rust-lang.github.io/rust-clippy/master/
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 25
+
+# Documentation style
+doc-valid-idents = ["HTTP", "IPC", "JSON", "API", "TCP", "UDP", "URL", "UUID", "CPU", "GPU", "CLI", "TTL", "LRU"]
+
+# Too many arguments threshold
+too-many-arguments-threshold = 7
+
+# Too many lines threshold
+too-many-lines-threshold = 100
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Trivially copy pass by value size threshold
+trivial-copy-size-limit = 64
+
+# Enum variant size difference threshold
+enum-variant-size-threshold = 200
+
+# Large types passed by value threshold
+pass-by-value-size-limit = 256
+
+# Large stack arrays threshold
+array-size-threshold = 512
+
+# Vector initialization with new allocation threshold
+vec-box-size-threshold = 4096
+
+# Allow certain lints for flexibility
+allow-print-in-tests = true
+allow-unwrap-in-tests = true

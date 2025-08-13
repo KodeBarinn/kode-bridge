@@ -19,8 +19,8 @@
 /// # Windows  
 /// CUSTOM_PIPE=\\.\pipe\my_pipe
 /// ```
-use dotenv::dotenv;
-use kode_bridge::{ClientConfig, IpcHttpClient, PoolConfig, Result};
+use dotenvy::dotenv;
+use kode_bridge::{ClientConfig, IpcHttpClient, Result};
 use serde_json::Value;
 use std::env;
 use std::time::Duration;
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     let config = ClientConfig {
         default_timeout: Duration::from_secs(30), // Longer timeout for large data
         enable_pooling: true,
-        pool_config: PoolConfig {
+        pool_config: kode_bridge::pool::PoolConfig {
             max_size: 5,
             min_idle: 2,
             max_idle_time_ms: 300_000,

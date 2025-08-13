@@ -1,8 +1,7 @@
 use crate::errors::{KodeBridgeError, Result};
-use crate::http_client::RequestBuilder;
 use bytes::Bytes;
 use futures::stream::StreamExt;
-use http::{HeaderMap, Method, StatusCode, header};
+use http::{header, HeaderMap, StatusCode};
 use pin_project_lite::pin_project;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -332,7 +331,9 @@ where
     let mut response = httparse::Response::new(&mut headers);
 
     let status = match response.parse(&buffer[..headers_end])? {
-        httparse::Status::Complete(_) => response.code.unwrap(),
+        httparse::Status::Complete(_) => response
+            .code
+            .ok_or_else(|| KodeBridgeError::protocol("HTTP response missing status code"))?,
         httparse::Status::Partial => {
             return Err(KodeBridgeError::protocol("Incomplete HTTP response"));
         }
@@ -380,27 +381,4 @@ where
     );
 
     Ok(response)
-}
-
-/// Convenience function for making streaming HTTP requests
-#[allow(dead_code)]
-pub async fn http_request_stream<S>(
-    stream: S,
-    method: &str,
-    path: &str,
-    body: Option<&Value>,
-) -> Result<StreamingResponse>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    let method = Method::from_str(method).map_err(|e| KodeBridgeError::Http(e.into()))?;
-
-    let mut builder = RequestBuilder::new(method, path.to_string());
-
-    if let Some(json_body) = body {
-        builder = builder.json(json_body)?;
-    }
-
-    let request = builder.build()?;
-    send_streaming_request(stream, request).await
 }

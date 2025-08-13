@@ -1,7 +1,7 @@
 use crate::errors::{KodeBridgeError, Result};
-use interprocess::local_socket::Name;
 use interprocess::local_socket::tokio::prelude::LocalSocketStream;
 use interprocess::local_socket::traits::tokio::Stream;
+use interprocess::local_socket::Name;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -160,7 +160,9 @@ impl ConnectionPoolInner {
         Err(KodeBridgeError::connection(format!(
             "Failed to create connection after {} attempts: {}",
             self.config.max_retries,
-            last_error.unwrap()
+            last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string())
         )))
     }
 

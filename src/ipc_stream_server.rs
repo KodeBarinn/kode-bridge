@@ -6,8 +6,8 @@
 use crate::errors::{KodeBridgeError, Result};
 use bytes::Bytes;
 use interprocess::local_socket::{
-    GenericFilePath, ListenerOptions, Name, ToFsName, tokio::prelude::LocalSocketStream,
-    traits::tokio::Listener,
+    tokio::prelude::LocalSocketStream, traits::tokio::Listener, GenericFilePath, ListenerOptions,
+    Name, ToFsName,
 };
 use parking_lot::RwLock;
 use serde_json::Value;
@@ -18,14 +18,14 @@ use std::{
     path::Path,
     pin::Pin,
     sync::{
-        Arc,
         atomic::{AtomicU64, Ordering},
+        Arc,
     },
     time::{Duration, Instant},
 };
 use tokio::{
     io::AsyncWriteExt,
-    sync::{Semaphore, broadcast},
+    sync::{broadcast, Semaphore},
     time::timeout,
 };
 use tokio_stream::{Stream, StreamExt};

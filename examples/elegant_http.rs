@@ -1,4 +1,4 @@
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use kode_bridge::{ClientConfig, IpcHttpClient, Result};
 use serde_json::json;
 use std::env;

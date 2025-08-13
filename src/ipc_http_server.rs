@@ -7,8 +7,8 @@ use crate::errors::{KodeBridgeError, Result};
 use bytes::Bytes;
 use http::{HeaderMap, Method, StatusCode, Uri};
 use interprocess::local_socket::{
-    GenericFilePath, ListenerOptions, Name, ToFsName, tokio::prelude::LocalSocketStream,
-    traits::tokio::Listener,
+    tokio::prelude::LocalSocketStream, traits::tokio::Listener, GenericFilePath, ListenerOptions,
+    Name, ToFsName,
 };
 use parking_lot::RwLock;
 use std::{
@@ -342,9 +342,42 @@ impl Router {
 
     /// Check if a route path matches the request path
     fn path_matches(&self, route_path: &str, request_path: &str) -> bool {
+        // Validate paths to prevent directory traversal attacks
+        if !self.is_safe_path(request_path) {
+            return false;
+        }
+
         // Simple exact match for now
         // TODO: Implement path parameter matching (e.g., /users/{id})
         route_path == request_path
+    }
+
+    pub fn is_safe_path(&self, path: &str) -> bool {
+        // Reject paths containing directory traversal patterns
+        if path.contains("..") || path.contains("\\") {
+            return false;
+        }
+
+        // Reject paths with null bytes or other control characters
+        if path.contains('\0')
+            || path
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
+        {
+            return false;
+        }
+
+        // Ensure path starts with /
+        if !path.starts_with('/') {
+            return false;
+        }
+
+        // Reject excessively long paths
+        if path.len() > 2048 {
+            return false;
+        }
+
+        true
     }
 }
 
@@ -677,9 +710,8 @@ impl IpcHttpServer {
                     // Connection closed
                     if total_data.is_empty() {
                         return Ok(None);
-                    } else {
-                        break;
                     }
+                    break;
                 }
                 Ok(n) => {
                     total_data.extend_from_slice(&buffer[..n]);
@@ -862,34 +894,56 @@ impl fmt::Debug for IpcHttpServer {
 }
 
 // Helper for URL decoding
-mod urlencoding {
-    pub fn decode(input: &str) -> Result<std::borrow::Cow<str>, ()> {
-        // Simple URL decoding implementation
-        if input.contains('%') {
-            let mut result = String::new();
-            let mut chars = input.chars();
+pub mod urlencoding {
+    use std::borrow::Cow;
 
-            while let Some(ch) = chars.next() {
-                if ch == '%' {
-                    let hex: String = chars.by_ref().take(2).collect();
-                    if hex.len() == 2 {
-                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                            result.push(byte as char);
-                        } else {
-                            return Err(());
-                        }
+    #[derive(Debug)]
+    pub struct DecodeError;
+
+    impl std::fmt::Display for DecodeError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Invalid URL encoding")
+        }
+    }
+
+    impl std::error::Error for DecodeError {}
+
+    pub fn decode(input: &str) -> Result<Cow<str>, DecodeError> {
+        // Safe URL decoding implementation with proper UTF-8 handling
+        if !input.contains('%') && !input.contains('+') {
+            return Ok(Cow::Borrowed(input));
+        }
+
+        let mut result = Vec::new();
+        let bytes = input.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            match bytes[i] {
+                b'%' => {
+                    if i + 2 < bytes.len() {
+                        let hex_str =
+                            std::str::from_utf8(&bytes[i + 1..i + 3]).map_err(|_| DecodeError)?;
+                        let byte = u8::from_str_radix(hex_str, 16).map_err(|_| DecodeError)?;
+                        result.push(byte);
+                        i += 3;
                     } else {
-                        return Err(());
+                        return Err(DecodeError);
                     }
-                } else if ch == '+' {
-                    result.push(' ');
-                } else {
-                    result.push(ch);
+                }
+                b'+' => {
+                    result.push(b' ');
+                    i += 1;
+                }
+                byte => {
+                    result.push(byte);
+                    i += 1;
                 }
             }
-            Ok(std::borrow::Cow::Owned(result))
-        } else {
-            Ok(std::borrow::Cow::Borrowed(input))
         }
+
+        // Validate UTF-8 and return
+        let decoded_str = String::from_utf8(result).map_err(|_| DecodeError)?;
+        Ok(Cow::Owned(decoded_str))
     }
 }

@@ -1,4 +1,4 @@
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use kode_bridge::{IpcStreamClient, Result};
 use serde::{Deserialize, Serialize};
 use std::{env, sync::Arc, time::Instant};

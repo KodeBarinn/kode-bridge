@@ -8,8 +8,10 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::errors::{KodeBridgeError, Result};
-use crate::http_client::{RequestBuilder, Response, send_request};
+use crate::http_client::{send_request, RequestBuilder, Response};
+use crate::metrics::global_metrics;
 use crate::pool::{ConnectionPool, PoolConfig, PooledConnection};
+use crate::retry::{RetryConfig, RetryExecutor};
 use http::Method;
 use std::str::FromStr;
 use tracing::{debug, trace};
@@ -54,6 +56,7 @@ pub struct IpcHttpClient {
     name: Name<'static>,
     config: ClientConfig,
     pool: Option<ConnectionPool>,
+    retry_executor: RetryExecutor,
 }
 
 /// HTTP request builder for fluent API
@@ -171,7 +174,19 @@ impl IpcHttpClient {
             None
         };
 
-        Ok(Self { name, config, pool })
+        // Create retry executor with appropriate configuration
+        let retry_config = RetryConfig::for_network_operations()
+            .max_attempts(config.max_retries)
+            .base_delay(Duration::from_millis(config.pool_config.retry_delay_ms));
+
+        let retry_executor = RetryExecutor::new(retry_config);
+
+        Ok(Self {
+            name,
+            config,
+            pool,
+            retry_executor,
+        })
     }
 
     /// Create a direct connection (bypassing pool)
@@ -198,16 +213,38 @@ impl IpcHttpClient {
         Err(KodeBridgeError::connection(format!(
             "Failed to create connection after {} attempts: {}",
             self.config.max_retries,
-            last_error.unwrap()
+            last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string())
         )))
     }
 
     /// Get a connection (from pool or create new)
     async fn get_connection(&self) -> Result<Either<PooledConnection, LocalSocketStream>> {
+        let metrics = global_metrics();
+
         if let Some(ref pool) = self.pool {
-            pool.get_connection().await.map(Either::Pool)
+            match pool.get_connection().await {
+                Ok(conn) => {
+                    metrics.connection_created(true); // From pool
+                    Ok(Either::Pool(conn))
+                }
+                Err(e) => {
+                    metrics.connection_failed();
+                    Err(e)
+                }
+            }
         } else {
-            self.create_direct_connection().await.map(Either::Direct)
+            match self.create_direct_connection().await {
+                Ok(stream) => {
+                    metrics.connection_created(false); // Direct connection
+                    Ok(Either::Direct(stream))
+                }
+                Err(e) => {
+                    metrics.connection_failed();
+                    Err(e)
+                }
+            }
         }
     }
 
@@ -235,7 +272,7 @@ impl IpcHttpClient {
         let method = Method::from_str(method)
             .map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
 
-        let mut builder = RequestBuilder::new(method, path.to_string());
+        let mut builder = RequestBuilder::new(method.clone(), path.to_string());
 
         if let Some(json_body) = body {
             builder = builder.json(json_body)?;
@@ -243,75 +280,32 @@ impl IpcHttpClient {
 
         let request = builder.build()?;
 
-        // Use exponential backoff retry mechanism
-        let mut last_error = None;
-        let mut delay = self.config.retry_delay;
+        // Use smart retry mechanism
+        self.retry_executor
+            .execute_with_context(&format!("{} {}", method.as_str(), path), || async {
+                // Execute with timeout
+                let result = tokio::time::timeout(timeout, async {
+                    let mut connection = self.get_connection().await?;
 
-        for attempt in 0..=self.config.max_retries {
-            if attempt > 0 {
-                // Add random jitter to avoid thundering herd
-                let jitter = delay.as_millis() as f64 * 0.1 * rand::random::<f64>();
-                let jittered_delay = delay + Duration::from_millis(jitter as u64);
-                tokio::time::sleep(jittered_delay).await;
-
-                // Exponential backoff, max 2 seconds
-                delay = std::cmp::min(delay * 2, Duration::from_millis(2000));
-            }
-
-            // Execute with timeout
-            let result = tokio::time::timeout(timeout, async {
-                let mut connection = self.get_connection().await?;
-
-                match &mut connection {
-                    Either::Pool(conn) => {
-                        if let Some(stream) = conn.stream() {
-                            send_request(stream, request.clone()).await
-                        } else {
-                            Err(KodeBridgeError::connection("Pooled connection is invalid"))
+                    match &mut connection {
+                        Either::Pool(conn) => {
+                            if let Some(stream) = conn.stream() {
+                                send_request(stream, request.clone()).await
+                            } else {
+                                Err(KodeBridgeError::connection("Pooled connection is invalid"))
+                            }
                         }
+                        Either::Direct(stream) => send_request(stream, request.clone()).await,
                     }
-                    Either::Direct(stream) => send_request(stream, request.clone()).await,
+                })
+                .await;
+
+                match result {
+                    Ok(response) => response,
+                    Err(_) => Err(KodeBridgeError::timeout(timeout.as_millis() as u64)),
                 }
             })
-            .await;
-
-            match result {
-                Ok(Ok(response)) => return Ok(response),
-                Ok(Err(e)) => {
-                    // Determine if retry should be attempted
-                    if attempt < self.config.max_retries && self.should_retry(&e) {
-                        trace!("Request attempt {} failed, retrying: {}", attempt + 1, e);
-                        last_error = Some(e);
-                        continue;
-                    } else {
-                        return Err(e);
-                    }
-                }
-                Err(_) => {
-                    // Timeout error
-                    let timeout_err = KodeBridgeError::timeout(timeout.as_millis() as u64);
-                    if attempt < self.config.max_retries {
-                        trace!("Request attempt {} timed out, retrying", attempt + 1);
-                        last_error = Some(timeout_err);
-                        continue;
-                    } else {
-                        return Err(timeout_err);
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| KodeBridgeError::custom("Max retries exceeded")))
-    }
-
-    /// Determine if an error should trigger a retry
-    fn should_retry(&self, error: &KodeBridgeError) -> bool {
-        matches!(
-            error,
-            KodeBridgeError::Connection { .. }
-                | KodeBridgeError::Timeout { .. }
-                | KodeBridgeError::Io(_)
-        )
+            .await
     }
 
     /// GET request
@@ -398,8 +392,12 @@ impl<'a> HttpRequestBuilder<'a> {
 
     /// Send the request
     pub async fn send(self) -> Result<HttpResponse> {
+        let metrics = global_metrics();
+        let tracker = metrics.request_start(self.method.as_str());
+
         let timeout = self.timeout.unwrap_or(self.client.config.default_timeout);
-        let response = self
+
+        match self
             .client
             .send_request_internal(
                 self.method.as_str(),
@@ -407,9 +405,17 @@ impl<'a> HttpRequestBuilder<'a> {
                 self.body.as_ref(),
                 timeout,
             )
-            .await?;
-
-        Ok(HttpResponse::new(response))
+            .await
+        {
+            Ok(response) => {
+                tracker.success(response.status_code());
+                Ok(HttpResponse::new(response))
+            }
+            Err(e) => {
+                tracker.failure(&format!("{:?}", e));
+                Err(e)
+            }
+        }
     }
 }
 
