@@ -65,7 +65,7 @@ impl BufferPool {
 
 impl Default for BufferPool {
     fn default() -> Self {
-        Self::new(8192, 32) // 8KB buffers, max 32 in pool
+        Self::new(16384, 64) // 16KB buffers, max 64 in pool (increased for better performance)
     }
 }
 
@@ -165,25 +165,30 @@ pub struct GlobalBufferPools {
     medium: BufferPool,
     /// Large buffers for big payloads
     large: BufferPool,
+    /// Extra large buffers for very large PUT/POST requests
+    extra_large: BufferPool,
 }
 
 impl GlobalBufferPools {
     pub fn new() -> Self {
         Self {
-            small: BufferPool::new(1024, 16),  // 1KB buffers
-            medium: BufferPool::new(8192, 32), // 8KB buffers
-            large: BufferPool::new(65536, 8),  // 64KB buffers
+            small: BufferPool::new(2048, 32),   // 2KB buffers, more instances
+            medium: BufferPool::new(16384, 64), // 16KB buffers, doubled size and count
+            large: BufferPool::new(131072, 16), // 128KB buffers, doubled size, more instances
+            extra_large: BufferPool::new(1048576, 8), // 1MB buffers for very large requests
         }
     }
 
-    /// Get appropriate buffer based on expected size
+    /// Get appropriate buffer based on expected size with better size selection
     pub fn get_buffer(&self, expected_size: usize) -> PooledBuffer {
-        if expected_size <= 1024 {
+        if expected_size <= 2048 {
             self.small.get()
-        } else if expected_size <= 8192 {
+        } else if expected_size <= 16384 {
             self.medium.get()
-        } else {
+        } else if expected_size <= 131072 {
             self.large.get()
+        } else {
+            self.extra_large.get()
         }
     }
 
@@ -202,11 +207,17 @@ impl GlobalBufferPools {
         self.large.get()
     }
 
+    /// Get extra large buffer (for very large PUT/POST requests)
+    pub fn get_extra_large(&self) -> PooledBuffer {
+        self.extra_large.get()
+    }
+
     /// Warm up all pools
     pub fn warm_up(&self) {
-        self.small.warm_up(8);
-        self.medium.warm_up(16);
-        self.large.warm_up(4);
+        self.small.warm_up(16); // More pre-warmed buffers
+        self.medium.warm_up(32);
+        self.large.warm_up(8);
+        self.extra_large.warm_up(4);
     }
 
     /// Get pool statistics
@@ -215,6 +226,7 @@ impl GlobalBufferPools {
             small_pool_size: self.small.size(),
             medium_pool_size: self.medium.size(),
             large_pool_size: self.large.size(),
+            extra_large_pool_size: self.extra_large.size(),
         }
     }
 }
@@ -230,6 +242,7 @@ pub struct BufferPoolStats {
     pub small_pool_size: usize,
     pub medium_pool_size: usize,
     pub large_pool_size: usize,
+    pub extra_large_pool_size: usize,
 }
 
 // Global instance - use lazy initialization

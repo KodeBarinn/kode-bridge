@@ -47,12 +47,12 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            max_connections: 100,
-            read_timeout: Duration::from_secs(30),
-            write_timeout: Duration::from_secs(30),
-            max_request_size: 1024 * 1024, // 1MB
+            max_connections: 200,                   // 增加最大连接数
+            read_timeout: Duration::from_secs(15),  // 减少读超时
+            write_timeout: Duration::from_secs(10), // 减少写超时
+            max_request_size: 10 * 1024 * 1024,     // 增加到10MB支持大的PUT请求
             enable_logging: true,
-            shutdown_timeout: Duration::from_secs(5),
+            shutdown_timeout: Duration::from_secs(3), // 减少关闭超时
         }
     }
 }

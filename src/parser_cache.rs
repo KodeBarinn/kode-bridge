@@ -49,7 +49,10 @@ impl ReusableParser {
 
                 Ok((status_code, parsed_headers))
             }
-            httparse::Status::Partial => Err(httparse::Error::TooManyHeaders),
+            httparse::Status::Partial => {
+                // 这不应该发生，因为我们应该已经读取了完整的头部
+                Err(httparse::Error::Status)
+            }
         }
     }
 
@@ -75,7 +78,7 @@ impl ReusableParser {
 
                 Ok((method.to_string(), path.to_string(), parsed_headers))
             }
-            httparse::Status::Partial => Err(httparse::Error::TooManyHeaders),
+            httparse::Status::Partial => Err(httparse::Error::Status), // 需要更多数据，而不是头部太多
         }
     }
 

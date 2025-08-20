@@ -58,6 +58,7 @@ mod test_utils {
         config.client.retry_delay_ms = 100;
         config.client.connection_timeout_ms = 1000;
         config.client.pool.max_size = 5;
+        config.client.pool.min_idle = 2; // 确保 min_idle <= max_size
         config
     }
 
@@ -193,8 +194,8 @@ mod tests {
         assert_eq!(pool_config.max_idle_time_ms, 300_000);
 
         let default_config = PoolConfig::default();
-        assert_eq!(default_config.max_size, 20);
-        assert_eq!(default_config.min_idle, 5);
+        assert_eq!(default_config.max_size, 50);
+        assert_eq!(default_config.min_idle, 10);
     }
 
     #[cfg(feature = "server")]

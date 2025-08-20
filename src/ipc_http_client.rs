@@ -37,13 +37,13 @@ pub struct ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            default_timeout: Duration::from_secs(10), // Reduce default timeout
+            default_timeout: Duration::from_secs(5), // 减少默认超时到5秒
             pool_config: PoolConfig::default(),
             enable_pooling: true,
-            max_retries: 5,                         // Increase retry attempts
-            retry_delay: Duration::from_millis(50), // Reduce retry delay
-            max_concurrent_requests: 8,             // Limit concurrent requests
-            max_requests_per_second: Some(10.0),    // Limit requests per second
+            max_retries: 3,                         // 减少重试次数
+            retry_delay: Duration::from_millis(25), // 减少重试延迟
+            max_concurrent_requests: 16,            // 增加并发请求数
+            max_requests_per_second: Some(50.0),    // 增加请求速率限制
         }
     }
 }
@@ -57,6 +57,8 @@ pub struct IpcHttpClient {
     config: ClientConfig,
     pool: Option<ConnectionPool>,
     retry_executor: RetryExecutor,
+    /// 专门用于PUT请求的重试执行器
+    put_retry_executor: RetryExecutor,
 }
 
 /// HTTP request builder for fluent API
@@ -67,6 +69,10 @@ pub struct HttpRequestBuilder<'a> {
     body: Option<Value>,
     timeout: Option<Duration>,
     headers: Vec<(String, String)>,
+    /// PUT专用优化标志
+    put_optimized: bool,
+    /// 预期数据大小，用于选择合适的缓冲区和超时
+    expected_size: Option<usize>,
 }
 
 /// Enhanced HTTP response wrapper with chainable methods
@@ -174,18 +180,25 @@ impl IpcHttpClient {
             None
         };
 
-        // Create retry executor with appropriate configuration
+        // Create retry executor with optimized configuration for different request types
         let retry_config = RetryConfig::for_network_operations()
-            .max_attempts(config.max_retries)
-            .base_delay(Duration::from_millis(config.pool_config.retry_delay_ms));
+            .max_attempts(config.max_retries.min(3)) // 限制最大重试次数以提高响应速度
+            .base_delay(Duration::from_millis(
+                config.pool_config.retry_delay_ms.min(25),
+            )); // 更快的重试
 
         let retry_executor = RetryExecutor::new(retry_config);
+
+        // 创建专门用于PUT请求的快速重试执行器
+        let put_retry_config = RetryConfig::for_put_requests();
+        let put_retry_executor = RetryExecutor::new(put_retry_config);
 
         Ok(Self {
             name,
             config,
             pool,
             retry_executor,
+            put_retry_executor,
         })
     }
 
@@ -308,6 +321,110 @@ impl IpcHttpClient {
             .await
     }
 
+    /// Enhanced request sending with PUT optimization support
+    async fn send_request_with_optimization(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+        is_put_optimized: bool,
+        expected_size: Option<usize>,
+    ) -> Result<Response> {
+        let method_enum = Method::from_str(method)
+            .map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
+
+        let mut builder = RequestBuilder::new(method_enum.clone(), path.to_string());
+
+        if let Some(json_body) = body {
+            builder = builder.json(json_body)?;
+        }
+
+        let request = builder.build()?;
+
+        // PUT请求使用专门的重试策略
+        let retry_context = if is_put_optimized {
+            format!("PUT_OPTIMIZED {}", path)
+        } else {
+            format!("{} {}", method, path)
+        };
+
+        // Use smart retry mechanism with PUT optimization
+        let retry_executor = if is_put_optimized {
+            &self.put_retry_executor // 使用PUT专用的快速重试器
+        } else {
+            &self.retry_executor // 使用通用重试器
+        };
+
+        retry_executor
+            .execute_with_context(&retry_context, || async {
+                // Execute with timeout
+                let result = tokio::time::timeout(timeout, async {
+                    let mut connection = if is_put_optimized && expected_size.unwrap_or(0) > 10240 {
+                        // 对于大的PUT请求，优先获取新连接
+                        self.get_fresh_connection().await?
+                    } else {
+                        self.get_connection().await?
+                    };
+
+                    match &mut connection {
+                        Either::Pool(conn) => {
+                            if let Some(stream) = conn.stream() {
+                                send_request(stream, request.clone()).await
+                            } else {
+                                Err(KodeBridgeError::connection("Pooled connection is invalid"))
+                            }
+                        }
+                        Either::Direct(stream) => send_request(stream, request.clone()).await,
+                    }
+                })
+                .await;
+
+                match result {
+                    Ok(response) => response,
+                    Err(_) => Err(KodeBridgeError::timeout(timeout.as_millis() as u64)),
+                }
+            })
+            .await
+    }
+
+    /// Get a fresh connection optimized for PUT requests
+    async fn get_fresh_connection(&self) -> Result<Either<PooledConnection, LocalSocketStream>> {
+        use interprocess::local_socket::tokio::prelude::LocalSocketStream;
+
+        // 首先尝试从连接池获取新连接
+        if let Some(ref pool) = self.pool {
+            match tokio::time::timeout(Duration::from_millis(20), pool.get_fresh_connection()).await
+            {
+                Ok(Ok(conn)) => return Ok(Either::Pool(conn)),
+                Ok(Err(_)) | Err(_) => {
+                    // 池化新连接失败，继续尝试直接连接
+                }
+            }
+        }
+
+        // 直接创建连接，使用更快的超时设置
+        match tokio::time::timeout(
+            Duration::from_millis(100),
+            LocalSocketStream::connect(self.name.clone()),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => Ok(Either::Direct(stream)),
+            Ok(Err(_)) | Err(_) => {
+                // 如果直接连接失败，回退到普通池化连接
+                if let Some(ref pool) = self.pool {
+                    let conn = pool.get_connection().await?;
+                    Ok(Either::Pool(conn))
+                } else {
+                    Err(KodeBridgeError::connection(
+                        "Failed to get fresh connection",
+                    ))
+                }
+            }
+        }
+    }
+
     /// GET request
     pub fn get(&self, path: &str) -> HttpRequestBuilder<'_> {
         HttpRequestBuilder::new(self, Method::GET, path)
@@ -318,9 +435,47 @@ impl IpcHttpClient {
         HttpRequestBuilder::new(self, Method::POST, path)
     }
 
-    /// PUT request
+    /// PUT request with optimization enabled by default
     pub fn put(&self, path: &str) -> HttpRequestBuilder<'_> {
         HttpRequestBuilder::new(self, Method::PUT, path)
+    }
+
+    /// Optimized batch PUT operations
+    pub async fn put_batch(&self, requests: Vec<(String, Value)>) -> Result<Vec<HttpResponse>> {
+        let batch_size = requests.len();
+        if batch_size == 0 {
+            return Ok(Vec::new());
+        }
+
+        // 限制并发数以避免过载
+        let concurrent_limit = std::cmp::min(self.config.max_concurrent_requests, batch_size);
+        let mut responses = Vec::with_capacity(batch_size);
+
+        // 分批处理以控制内存使用和网络负载
+        for chunk in requests.chunks(concurrent_limit) {
+            let mut futures = Vec::new();
+
+            for (path, body) in chunk {
+                let path = path.clone();
+                let body = body.clone();
+
+                let future = self.put(&path).json_body(&body).optimize_for_put().send();
+
+                futures.push(future);
+            }
+
+            // 并发等待当前批次完成
+            let chunk_results = futures::future::join_all(futures).await;
+
+            for result in chunk_results {
+                match result {
+                    Ok(response) => responses.push(response),
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        Ok(responses)
     }
 
     /// DELETE request
@@ -354,10 +509,34 @@ impl IpcHttpClient {
             pool.close();
         }
     }
+
+    /// Preheat connections for better PUT performance
+    pub async fn preheat_for_puts(&self, count: usize) {
+        if let Some(ref pool) = self.pool {
+            pool.preheat_for_puts(count).await;
+        }
+    }
+
+    /// Smart timeout calculation based on request characteristics
+    fn calculate_smart_timeout(&self, method: &str, body_size: Option<usize>) -> Duration {
+        match method {
+            "PUT" | "POST" => {
+                match body_size {
+                    Some(size) if size > 5 * 1024 * 1024 => Duration::from_secs(30), // >5MB: 30s
+                    Some(size) if size > 1024 * 1024 => Duration::from_secs(15),     // >1MB: 15s
+                    Some(size) if size > 100 * 1024 => Duration::from_secs(8),       // >100KB: 8s
+                    Some(size) if size > 10 * 1024 => Duration::from_secs(4),        // >10KB: 4s
+                    _ => Duration::from_secs(2),                                     // 小请求: 2s
+                }
+            }
+            _ => self.config.default_timeout, // 其他方法使用默认超时
+        }
+    }
 }
 
 impl<'a> HttpRequestBuilder<'a> {
     fn new(client: &'a IpcHttpClient, method: Method, path: &str) -> Self {
+        let is_put = method == Method::PUT;
         Self {
             client,
             method,
@@ -365,18 +544,40 @@ impl<'a> HttpRequestBuilder<'a> {
             body: None,
             timeout: None,
             headers: Vec::new(),
+            put_optimized: is_put, // 自动为PUT请求启用优化
+            expected_size: None,
         }
     }
 
     /// Set JSON body
     pub fn json_body(mut self, body: &Value) -> Self {
         self.body = Some(body.clone());
+
+        // 为PUT请求估算数据大小以优化处理
+        if self.method == Method::PUT {
+            if let Ok(json_bytes) = serde_json::to_vec(body) {
+                self.expected_size = Some(json_bytes.len());
+            }
+        }
+
         self
     }
 
     /// Set custom timeout
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    /// 设置预期数据大小（用于PUT请求优化）
+    pub fn expected_size(mut self, size: usize) -> Self {
+        self.expected_size = Some(size);
+        self
+    }
+
+    /// 启用PUT请求专门优化
+    pub fn optimize_for_put(mut self) -> Self {
+        self.put_optimized = true;
         self
     }
 
@@ -395,15 +596,25 @@ impl<'a> HttpRequestBuilder<'a> {
         let metrics = global_metrics();
         let tracker = metrics.request_start(self.method.as_str());
 
-        let timeout = self.timeout.unwrap_or(self.client.config.default_timeout);
+        // 为PUT请求优化超时设置，使用智能超时计算
+        let timeout = if self.put_optimized {
+            self.timeout.unwrap_or_else(|| {
+                self.client
+                    .calculate_smart_timeout(self.method.as_str(), self.expected_size)
+            })
+        } else {
+            self.timeout.unwrap_or(self.client.config.default_timeout)
+        };
 
         match self
             .client
-            .send_request_internal(
+            .send_request_with_optimization(
                 self.method.as_str(),
                 &self.path,
                 self.body.as_ref(),
                 timeout,
+                self.put_optimized,
+                self.expected_size,
             )
             .await
         {

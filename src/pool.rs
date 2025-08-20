@@ -33,14 +33,14 @@ pub struct PoolConfig {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_size: 20,              // Increase connection pool size to support more concurrency
-            min_idle: 5,               // Maintain more idle connections
-            max_idle_time_ms: 300_000, // 5 minutes
-            connection_timeout_ms: 10_000, // Reduce connection timeout
-            retry_delay_ms: 50,        // Reduce retry delay
-            max_retries: 5,            // Increase retry attempts
-            max_concurrent_requests: 8,
-            max_requests_per_second: Some(10.0),
+            max_size: 50,                        // 增加连接池大小以支持更多并发
+            min_idle: 10,                        // 保持更多空闲连接
+            max_idle_time_ms: 180_000,           // 3分钟 - 减少空闲时间以释放资源更快
+            connection_timeout_ms: 5_000,        // 减少连接超时到5秒
+            retry_delay_ms: 25,                  // 减少重试延迟到25ms
+            max_retries: 3,                      // 减少重试次数以避免过长等待
+            max_concurrent_requests: 16,         // 增加并发请求限制
+            max_requests_per_second: Some(50.0), // 增加速率限制
         }
     }
 }
@@ -116,12 +116,14 @@ impl Drop for PooledConnection {
     }
 }
 
-/// Internal pool state
+/// Internal pool state with PUT request optimization
 struct ConnectionPoolInner {
     name: Name<'static>,
     config: PoolConfig,
     connections: Mutex<VecDeque<(LocalSocketStream, Instant)>>,
     semaphore: Semaphore,
+    /// 专用于PUT请求的新连接缓存
+    fresh_connections: Mutex<VecDeque<LocalSocketStream>>,
 }
 
 impl ConnectionPoolInner {
@@ -130,7 +132,71 @@ impl ConnectionPoolInner {
             name,
             semaphore: Semaphore::new(config.max_size),
             connections: Mutex::new(VecDeque::new()),
+            fresh_connections: Mutex::new(VecDeque::new()),
             config,
+        }
+    }
+
+    /// Get a fresh connection for PUT requests, bypassing normal pool
+    async fn get_fresh_connection(&self) -> Result<LocalSocketStream> {
+        // 首先检查是否有预备的新连接
+        {
+            let mut fresh = self.fresh_connections.lock();
+            if let Some(stream) = fresh.pop_front() {
+                return Ok(stream);
+            }
+        }
+
+        // 创建新连接，使用更短的超时和优化的参数
+        let mut last_error = None;
+        for attempt in 0..2 {
+            // 只重试1次，更快失败
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await; // 很短的重试延迟
+            }
+
+            match LocalSocketStream::connect(self.name.clone()).await {
+                Ok(stream) => {
+                    debug!("Created fresh connection for PUT request");
+                    return Ok(stream);
+                }
+                Err(e) => {
+                    warn!("Fresh connection attempt {} failed: {}", attempt + 1, e);
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        // 如果新连接失败，回退到池化连接
+        match self.get_pooled_connection() {
+            Some(stream) => {
+                debug!("Falling back to pooled connection for PUT request");
+                Ok(stream)
+            }
+            None => Err(KodeBridgeError::connection(format!(
+                "Failed to get fresh connection and no pooled connections available: {}",
+                last_error
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "Unknown error".to_string())
+            ))),
+        }
+    }
+
+    /// 预热新连接池，为PUT请求做准备
+    async fn preheat_fresh_connections(&self, count: usize) {
+        let mut successful = 0;
+        for _ in 0..count {
+            match LocalSocketStream::connect(self.name.clone()).await {
+                Ok(stream) => {
+                    let mut fresh = self.fresh_connections.lock();
+                    fresh.push_back(stream);
+                    successful += 1;
+                }
+                Err(_) => break,
+            }
+        }
+        if successful > 0 {
+            debug!("Preheated {} fresh connections", successful);
         }
     }
 
@@ -158,8 +224,7 @@ impl ConnectionPoolInner {
         }
 
         Err(KodeBridgeError::connection(format!(
-            "Failed to create connection after {} attempts: {}",
-            self.config.max_retries,
+            "Failed to get fresh connection and no pooled connections available: {}",
             last_error
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "Unknown error".to_string())
@@ -219,6 +284,20 @@ impl ConnectionPoolInner {
         permit.forget(); // Release the permit
         Ok(stream)
     }
+
+    /// Get a fresh connection optimized for PUT requests
+    async fn get_fresh_connection_with_timeout(&self) -> Result<LocalSocketStream> {
+        // Try to get a permit within a shorter timeout for PUT requests
+        let permit = tokio::time::timeout(Duration::from_millis(50), self.semaphore.acquire())
+            .await
+            .map_err(|_| KodeBridgeError::timeout(50))?
+            .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
+
+        // Get fresh connection directly
+        let stream = self.get_fresh_connection().await?;
+        permit.forget(); // Release the permit
+        Ok(stream)
+    }
 }
 
 /// High-performance connection pool for IPC connections
@@ -244,6 +323,17 @@ impl ConnectionPool {
     pub async fn get_connection(&self) -> Result<PooledConnection> {
         let stream = self.inner.get_connection_with_timeout().await?;
         Ok(PooledConnection::new(stream, self.inner.clone()))
+    }
+
+    /// Get a fresh connection optimized for PUT requests
+    pub async fn get_fresh_connection(&self) -> Result<PooledConnection> {
+        let stream = self.inner.get_fresh_connection_with_timeout().await?;
+        Ok(PooledConnection::new(stream, self.inner.clone()))
+    }
+
+    /// Preheat fresh connections for better PUT performance
+    pub async fn preheat_for_puts(&self, count: usize) {
+        self.inner.preheat_fresh_connections(count).await;
     }
 
     /// Get multiple connections for concurrent operations

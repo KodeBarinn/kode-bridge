@@ -148,8 +148,28 @@ impl RetryConfig {
 
     pub fn for_quick_operations() -> Self {
         Self::new()
-            .max_attempts(3)
+            .max_attempts(2)
             .base_delay(Duration::from_millis(10))
+            .max_delay(Duration::from_millis(100))
+            .fixed_backoff()
+            .jitter(JitterStrategy::None)
+    }
+
+    /// Optimized configuration for PUT requests
+    pub fn for_put_requests() -> Self {
+        Self::new()
+            .max_attempts(2) // 少重试，快速失败
+            .base_delay(Duration::from_millis(25))
+            .max_delay(Duration::from_millis(200))
+            .exponential_backoff(1.5) // 温和的退避
+            .jitter(JitterStrategy::Partial)
+    }
+
+    /// Configuration for large PUT requests
+    pub fn for_large_put_requests() -> Self {
+        Self::new()
+            .max_attempts(3) // 稍多重试，因为大请求更容易失败
+            .base_delay(Duration::from_millis(50))
             .max_delay(Duration::from_millis(500))
             .linear_backoff(Duration::from_millis(50))
             .jitter(JitterStrategy::Partial)
