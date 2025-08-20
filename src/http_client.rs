@@ -251,26 +251,28 @@ where
         // 将头部行添加到缓冲区
         headers_buffer.extend_from_slice(line.as_bytes());
     }
-    
+
     // 添加最后的 \r\n 来标记头部结束
     headers_buffer.extend_from_slice(b"\r\n");
 
     // Use cached parser for better performance
     let mut parser = global_parser_cache().get();
-    let (status, parsed_headers) = parser.parse_response(&headers_buffer).map_err(|e| {
-        match e {
+    let (status, parsed_headers) = parser
+        .parse_response(&headers_buffer)
+        .map_err(|e| match e {
             httparse::Error::TooManyHeaders => {
                 KodeBridgeError::protocol("Too many HTTP headers in response (limit: 64)")
             }
             _ => KodeBridgeError::protocol(format!("Failed to parse HTTP response: {:?}", e)),
-        }
-    })?;
+        })?;
 
     // Build HeaderMap
     let mut header_map = HeaderMap::new();
     for (name, value) in parsed_headers {
-        let header_name = HeaderName::from_str(&name).map_err(|e| KodeBridgeError::Http(e.into()))?;
-        let header_value = HeaderValue::from_str(&value).map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let header_name =
+            HeaderName::from_str(&name).map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let header_value =
+            HeaderValue::from_str(&value).map_err(|e| KodeBridgeError::Http(e.into()))?;
         header_map.insert(header_name, header_value);
     }
 
