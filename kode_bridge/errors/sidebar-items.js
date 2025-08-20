@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["KodeBridgeError"],"struct":["ErrorString"],"type":["AnyError","AnyResult","Result"]};
