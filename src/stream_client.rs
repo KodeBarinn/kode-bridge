@@ -179,7 +179,7 @@ impl StreamingResponse {
         Ok(())
     }
 
-    /// Process stream with timeout and error handling
+    /// Process stream with timeout and error handling - optimized for better performance
     pub async fn process_lines_with_timeout<F>(
         mut self,
         timeout: Duration,
@@ -188,7 +188,9 @@ impl StreamingResponse {
     where
         F: FnMut(&str) -> std::result::Result<bool, Box<dyn std::error::Error + Send + Sync>>, // Return false to stop
     {
-        let timeout_future = tokio::time::sleep(timeout);
+        // 使用更短的超时避免长时间的waker等待
+        let optimized_timeout = std::cmp::min(timeout, Duration::from_secs(5));
+        let timeout_future = tokio::time::sleep(optimized_timeout);
         tokio::pin!(timeout_future);
 
         loop {
@@ -201,6 +203,8 @@ impl StreamingResponse {
                                     if !continue_processing {
                                         break;
                                     }
+                                    // 重置超时计时器以避免不必要的超时
+                                    timeout_future.as_mut().reset(tokio::time::Instant::now() + optimized_timeout);
                                 }
                                 Err(e) => {
                                     warn!("Handler error: {}", e);
@@ -216,7 +220,7 @@ impl StreamingResponse {
                     }
                 }
                 _ = &mut timeout_future => {
-                    debug!("Processing timeout reached");
+                    debug!("Processing timeout reached ({:?})", optimized_timeout);
                     break;
                 }
             }
@@ -239,17 +243,24 @@ impl StreamingResponse {
         Ok(body_lines.join("\n"))
     }
 
-    /// Collect stream data with a timeout
+    /// Collect stream data with a timeout - optimized for better performance
     pub async fn collect_text_with_timeout(mut self, timeout: Duration) -> Result<String> {
         let mut body_lines = Vec::new();
-        let timeout_future = tokio::time::sleep(timeout);
+        
+        // 限制最大超时时间避免长时间waker等待
+        let optimized_timeout = std::cmp::min(timeout, Duration::from_secs(30));
+        let timeout_future = tokio::time::sleep(optimized_timeout);
         tokio::pin!(timeout_future);
 
         loop {
             tokio::select! {
                 line_result = self.stream.next() => {
                     match line_result {
-                        Some(Ok(line)) => body_lines.push(line),
+                        Some(Ok(line)) => {
+                            body_lines.push(line);
+                            // 收到数据后重置超时，避免不必要的超时
+                            timeout_future.as_mut().reset(tokio::time::Instant::now() + optimized_timeout);
+                        }
                         Some(Err(e)) => return Err(KodeBridgeError::from(e)),
                         None => break, // Stream ended
                     }
