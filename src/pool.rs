@@ -33,13 +33,13 @@ pub struct PoolConfig {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_size: 64,                        // 增加到2的幂次，更好的内存对齐
-            min_idle: 8,                         // 减少最小空闲连接
-            max_idle_time_ms: 120_000,           // 2分钟 - 进一步减少空闲时间
-            connection_timeout_ms: 3_000,        // 减少连接超时到3秒
-            retry_delay_ms: 10,                  // 减少重试延迟到10ms
-            max_retries: 2,                      // 减少重试次数到2次
-            max_concurrent_requests: 32,         // 增加并发请求限制到2的幂次
+            max_size: 64,                         // 增加到2的幂次，更好的内存对齐
+            min_idle: 8,                          // 减少最小空闲连接
+            max_idle_time_ms: 120_000,            // 2分钟 - 进一步减少空闲时间
+            connection_timeout_ms: 3_000,         // 减少连接超时到3秒
+            retry_delay_ms: 10,                   // 减少重试延迟到10ms
+            max_retries: 2,                       // 减少重试次数到2次
+            max_concurrent_requests: 32,          // 增加并发请求限制到2的幂次
             max_requests_per_second: Some(100.0), // 增加速率限制
         }
     }
@@ -259,7 +259,8 @@ impl ConnectionPoolInner {
         let mut connections = self.connections.lock();
 
         // 减少活跃连接计数
-        self.active_connections.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.active_connections
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
         // Only keep the connection if we haven't exceeded max_size
         if connections.len() < self.config.max_size {
@@ -272,14 +273,16 @@ impl ConnectionPoolInner {
 
     async fn get_connection_with_timeout(&self) -> Result<LocalSocketStream> {
         // 优化的获取连接逻辑，减少semaphore竞争
-        
+
         // 首先快速检查是否有可用的池化连接
         if let Some(stream) = self.get_pooled_connection() {
             return Ok(stream);
         }
 
         // 检查活跃连接数，避免不必要的semaphore等待
-        let active_count = self.active_connections.load(std::sync::atomic::Ordering::Relaxed);
+        let active_count = self
+            .active_connections
+            .load(std::sync::atomic::Ordering::Relaxed);
         if active_count >= self.config.max_size {
             // 快速失败路径，避免长时间等待
             return Err(KodeBridgeError::custom("Connection pool exhausted"));
@@ -289,9 +292,7 @@ impl ConnectionPoolInner {
         let timeout = std::cmp::min(self.config.connection_timeout(), Duration::from_millis(500));
         let permit = tokio::time::timeout(timeout, self.semaphore.acquire())
             .await
-            .map_err(|_| {
-                KodeBridgeError::timeout(timeout.as_millis() as u64)
-            })?
+            .map_err(|_| KodeBridgeError::timeout(timeout.as_millis() as u64))?
             .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
 
         // 再次检查池化连接（避免不必要的连接创建）
@@ -301,7 +302,8 @@ impl ConnectionPoolInner {
         }
 
         // 增加活跃连接计数
-        self.active_connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.active_connections
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // 创建新连接
         match self.create_connection().await {
@@ -311,7 +313,8 @@ impl ConnectionPoolInner {
             }
             Err(e) => {
                 // 出错时减少活跃连接计数
-                self.active_connections.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                self.active_connections
+                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 Err(e)
             }
         }
@@ -394,7 +397,10 @@ impl ConnectionPool {
     /// Get pool statistics
     pub fn stats(&self) -> PoolStats {
         let connections = self.inner.connections.lock();
-        let active_count = self.inner.active_connections.load(std::sync::atomic::Ordering::Relaxed);
+        let active_count = self
+            .inner
+            .active_connections
+            .load(std::sync::atomic::Ordering::Relaxed);
         PoolStats {
             total_connections: connections.len(),
             available_permits: self.inner.semaphore.available_permits(),

@@ -246,7 +246,7 @@ impl StreamingResponse {
     /// Collect stream data with a timeout - optimized for better performance
     pub async fn collect_text_with_timeout(mut self, timeout: Duration) -> Result<String> {
         let mut body_lines = Vec::new();
-        
+
         // 限制最大超时时间避免长时间waker等待
         let optimized_timeout = std::cmp::min(timeout, Duration::from_secs(30));
         let timeout_future = tokio::time::sleep(optimized_timeout);

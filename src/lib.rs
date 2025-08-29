@@ -194,8 +194,8 @@ mod tests {
         assert_eq!(pool_config.max_idle_time_ms, 300_000);
 
         let default_config = PoolConfig::default();
-        assert_eq!(default_config.max_size, 64);  // 更新为新的默认值
-        assert_eq!(default_config.min_idle, 8);   // 更新为新的默认值
+        assert_eq!(default_config.max_size, 64); // 更新为新的默认值
+        assert_eq!(default_config.min_idle, 8); // 更新为新的默认值
     }
 
     #[cfg(feature = "server")]
