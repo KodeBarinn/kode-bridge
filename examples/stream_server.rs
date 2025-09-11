@@ -46,7 +46,7 @@ fn generate_traffic_data() -> Result<serde_json::Value> {
     let mut rng = rand::rng();
     let traffic = TrafficData {
         timestamp,
-        up: rng.random_range(0..1000000), // Random upload bytes
+        up: rng.random_range(0..1000000),   // Random upload bytes
         down: rng.random_range(0..5000000), // Random download bytes
         connections: rng.random_range(10..110), // 10-110 connections
     };

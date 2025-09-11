@@ -1023,17 +1023,14 @@ mod tests {
 
     #[test]
     fn test_router_clone_independence() {
-        let router1 = Router::new()
-            .get("/original", |_ctx| async {
-                Ok(HttpResponse::text("original"))
-            });
+        let router1 = Router::new().get("/original", |_ctx| async {
+            Ok(HttpResponse::text("original"))
+        });
 
         let mut router2 = router1.clone();
 
         // Add a route to the cloned router
-        router2 = router2.post("/new", |_ctx| async {
-            Ok(HttpResponse::text("new"))
-        });
+        router2 = router2.post("/new", |_ctx| async { Ok(HttpResponse::text("new")) });
 
         // Original router should not have the new route
         assert_eq!(router1.routes.len(), 1);
@@ -1050,10 +1047,18 @@ mod tests {
     #[test]
     fn test_router_clone_with_multiple_methods() {
         let router = Router::new()
-            .get("/users", |_ctx| async { Ok(HttpResponse::text("GET users")) })
-            .post("/users", |_ctx| async { Ok(HttpResponse::text("POST users")) })
-            .put("/users/123", |_ctx| async { Ok(HttpResponse::text("PUT user")) })
-            .delete("/users/123", |_ctx| async { Ok(HttpResponse::text("DELETE user")) });
+            .get("/users", |_ctx| async {
+                Ok(HttpResponse::text("GET users"))
+            })
+            .post("/users", |_ctx| async {
+                Ok(HttpResponse::text("POST users"))
+            })
+            .put("/users/123", |_ctx| async {
+                Ok(HttpResponse::text("PUT user"))
+            })
+            .delete("/users/123", |_ctx| async {
+                Ok(HttpResponse::text("DELETE user"))
+            });
 
         let cloned_router = router.clone();
 
@@ -1081,23 +1086,21 @@ mod tests {
         let state1 = shared_state.clone();
         let state2 = shared_state.clone();
 
-        let router1 = Router::new()
-            .get("/increment", move |_ctx| {
-                let state = state1.clone();
-                async move {
-                    let value = state.fetch_add(1, Ordering::SeqCst);
-                    Ok(HttpResponse::text(format!("Router1: {}", value + 1)))
-                }
-            });
+        let router1 = Router::new().get("/increment", move |_ctx| {
+            let state = state1.clone();
+            async move {
+                let value = state.fetch_add(1, Ordering::SeqCst);
+                Ok(HttpResponse::text(format!("Router1: {}", value + 1)))
+            }
+        });
 
-        let router2 = router1.clone()
-            .get("/decrement", move |_ctx| {
-                let state = state2.clone();
-                async move {
-                    let value = state.fetch_sub(1, Ordering::SeqCst);
-                    Ok(HttpResponse::text(format!("Router2: {}", value - 1)))
-                }
-            });
+        let router2 = router1.clone().get("/decrement", move |_ctx| {
+            let state = state2.clone();
+            async move {
+                let value = state.fetch_sub(1, Ordering::SeqCst);
+                Ok(HttpResponse::text(format!("Router2: {}", value - 1)))
+            }
+        });
 
         let ctx = RequestContext {
             method: Method::GET,

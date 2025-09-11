@@ -3,8 +3,8 @@
 //! This example demonstrates how to create a simple HTTP-style IPC server
 //! that can handle various types of requests with routing and JSON responses.
 
-use kode_bridge::{Result, ServerConfig};
 use kode_bridge::ipc_http_server::{HttpResponse, IpcHttpServer, Router};
+use kode_bridge::{Result, ServerConfig};
 use serde_json::json;
 use std::env;
 use std::time::Duration;
