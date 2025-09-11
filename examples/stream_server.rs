@@ -4,6 +4,7 @@
 //! broadcasts real-time data to multiple connected clients.
 
 use kode_bridge::{IpcStreamServer, JsonDataSource, Result, StreamMessage, StreamServerConfig};
+use rand::Rng;
 use serde_json::json;
 use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -42,11 +43,12 @@ fn generate_traffic_data() -> Result<serde_json::Value> {
         .unwrap()
         .as_secs();
 
+    let mut rng = rand::rng();
     let traffic = TrafficData {
         timestamp,
-        up: rand::random::<u64>() % 1000000, // Random upload bytes
-        down: rand::random::<u64>() % 5000000, // Random download bytes
-        connections: rand::random::<u32>() % 100 + 10, // 10-110 connections
+        up: rng.random_range(0..1000000), // Random upload bytes
+        down: rng.random_range(0..5000000), // Random download bytes
+        connections: rng.random_range(10..110), // 10-110 connections
     };
 
     Ok(serde_json::to_value(traffic)?)
@@ -58,13 +60,14 @@ fn generate_system_metrics() -> Result<serde_json::Value> {
         .unwrap()
         .as_secs();
 
+    let mut rng = rand::rng();
     let metrics = SystemMetrics {
         timestamp,
-        cpu_usage: (rand::random::<f64>() * 100.0).round() / 100.0, // 0-100%
-        memory_usage: (rand::random::<f64>() * 100.0).round() / 100.0, // 0-100%
-        disk_usage: (rand::random::<f64>() * 100.0).round() / 100.0, // 0-100%
-        network_rx: rand::random::<u64>() % 1000000,
-        network_tx: rand::random::<u64>() % 1000000,
+        cpu_usage: (rng.random::<f64>() * 100.0).round() / 100.0, // 0-100%
+        memory_usage: (rng.random::<f64>() * 100.0).round() / 100.0, // 0-100%
+        disk_usage: (rng.random::<f64>() * 100.0).round() / 100.0, // 0-100%
+        network_rx: rng.random_range(0..1000000),
+        network_tx: rng.random_range(0..1000000),
     };
 
     Ok(serde_json::to_value(metrics)?)
@@ -86,7 +89,10 @@ fn generate_event_log() -> Result<serde_json::Value> {
         ("WARN", "Rate limit exceeded", "api"),
     ];
 
-    let (level, message, source) = events[rand::random::<usize>() % events.len()];
+    // Use rng for proper random number generation
+    let mut rng = rand::rng();
+    let index = rng.random_range(0..events.len());
+    let (level, message, source) = events[index];
 
     let event = EventLog {
         timestamp,

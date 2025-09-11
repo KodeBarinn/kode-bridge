@@ -58,7 +58,7 @@ impl Default for ServerConfig {
 }
 
 /// HTTP request context for handlers
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RequestContext {
     /// HTTP method
     pub method: Method,
@@ -125,7 +125,7 @@ impl RequestContext {
 }
 
 /// Client connection information
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientInfo {
     /// Connection ID for tracking
     pub connection_id: u64,
@@ -263,6 +263,7 @@ pub type HandlerFn = Box<
 >;
 
 /// Route definition for the HTTP server
+#[derive(Clone)]
 struct Route {
     method: Method,
     path: String,
@@ -270,6 +271,7 @@ struct Route {
 }
 
 /// Router for managing HTTP routes
+#[derive(Clone)]
 pub struct Router {
     routes: Vec<Route>,
 }
@@ -945,5 +947,184 @@ pub mod urlencoding {
         // Validate UTF-8 and return
         let decoded_str = String::from_utf8(result).map_err(|_| DecodeError)?;
         Ok(Cow::Owned(decoded_str))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::{Method, StatusCode};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_router_can_be_cloned() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = counter.clone();
+
+        let router = Router::new()
+            .get("/test", move |_ctx| {
+                let counter = counter_clone.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Ok(HttpResponse::text("Hello"))
+                }
+            })
+            .post("/data", |_ctx| async {
+                Ok(HttpResponse::json(&serde_json::json!({"status": "ok"})).unwrap())
+            });
+
+        // Clone the router
+        let cloned_router = router.clone();
+
+        // Verify both routers have the same routes
+        assert_eq!(router.routes.len(), cloned_router.routes.len());
+        assert_eq!(router.routes.len(), 2);
+
+        // Test that both routers can find the same routes
+        let get_route = router.find_route(&Method::GET, "/test");
+        let cloned_get_route = cloned_router.find_route(&Method::GET, "/test");
+        assert!(get_route.is_some());
+        assert!(cloned_get_route.is_some());
+
+        let post_route = router.find_route(&Method::POST, "/data");
+        let cloned_post_route = cloned_router.find_route(&Method::POST, "/data");
+        assert!(post_route.is_some());
+        assert!(cloned_post_route.is_some());
+
+        // Test that handlers work in both routers
+        let ctx = RequestContext {
+            method: Method::GET,
+            uri: "/test".parse().unwrap(),
+            headers: HeaderMap::new(),
+            body: Bytes::new(),
+            client_info: ClientInfo {
+                connection_id: 1,
+                connected_at: Instant::now(),
+            },
+            timestamp: Instant::now(),
+        };
+
+        // Execute handler from original router
+        if let Some(route) = get_route {
+            let response = (route.handler)(ctx.clone()).await.unwrap();
+            assert_eq!(response.status, StatusCode::OK);
+        }
+
+        // Execute handler from cloned router
+        if let Some(route) = cloned_get_route {
+            let response = (route.handler)(ctx).await.unwrap();
+            assert_eq!(response.status, StatusCode::OK);
+        }
+
+        // Verify the counter was incremented twice (once for each router)
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn test_router_clone_independence() {
+        let router1 = Router::new()
+            .get("/original", |_ctx| async {
+                Ok(HttpResponse::text("original"))
+            });
+
+        let mut router2 = router1.clone();
+
+        // Add a route to the cloned router
+        router2 = router2.post("/new", |_ctx| async {
+            Ok(HttpResponse::text("new"))
+        });
+
+        // Original router should not have the new route
+        assert_eq!(router1.routes.len(), 1);
+        assert_eq!(router2.routes.len(), 2);
+
+        // Verify routes
+        assert!(router1.find_route(&Method::GET, "/original").is_some());
+        assert!(router1.find_route(&Method::POST, "/new").is_none());
+
+        assert!(router2.find_route(&Method::GET, "/original").is_some());
+        assert!(router2.find_route(&Method::POST, "/new").is_some());
+    }
+
+    #[test]
+    fn test_router_clone_with_multiple_methods() {
+        let router = Router::new()
+            .get("/users", |_ctx| async { Ok(HttpResponse::text("GET users")) })
+            .post("/users", |_ctx| async { Ok(HttpResponse::text("POST users")) })
+            .put("/users/123", |_ctx| async { Ok(HttpResponse::text("PUT user")) })
+            .delete("/users/123", |_ctx| async { Ok(HttpResponse::text("DELETE user")) });
+
+        let cloned_router = router.clone();
+
+        // Both routers should have all methods
+        assert_eq!(router.routes.len(), 4);
+        assert_eq!(cloned_router.routes.len(), 4);
+
+        // Test all HTTP methods on both routers
+        let methods_and_paths = [
+            (Method::GET, "/users"),
+            (Method::POST, "/users"),
+            (Method::PUT, "/users/123"),
+            (Method::DELETE, "/users/123"),
+        ];
+
+        for (method, path) in &methods_and_paths {
+            assert!(router.find_route(method, path).is_some());
+            assert!(cloned_router.find_route(method, path).is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloned_router_handlers_work_independently() {
+        let shared_state = Arc::new(AtomicU32::new(0));
+        let state1 = shared_state.clone();
+        let state2 = shared_state.clone();
+
+        let router1 = Router::new()
+            .get("/increment", move |_ctx| {
+                let state = state1.clone();
+                async move {
+                    let value = state.fetch_add(1, Ordering::SeqCst);
+                    Ok(HttpResponse::text(format!("Router1: {}", value + 1)))
+                }
+            });
+
+        let router2 = router1.clone()
+            .get("/decrement", move |_ctx| {
+                let state = state2.clone();
+                async move {
+                    let value = state.fetch_sub(1, Ordering::SeqCst);
+                    Ok(HttpResponse::text(format!("Router2: {}", value - 1)))
+                }
+            });
+
+        let ctx = RequestContext {
+            method: Method::GET,
+            uri: "/increment".parse().unwrap(),
+            headers: HeaderMap::new(),
+            body: Bytes::new(),
+            client_info: ClientInfo {
+                connection_id: 1,
+                connected_at: Instant::now(),
+            },
+            timestamp: Instant::now(),
+        };
+
+        // Test increment route exists in both routers
+        let route1 = router1.find_route(&Method::GET, "/increment").unwrap();
+        let route2 = router2.find_route(&Method::GET, "/increment").unwrap();
+
+        let response1 = (route1.handler)(ctx.clone()).await.unwrap();
+        let response2 = (route2.handler)(ctx).await.unwrap();
+
+        // Both should work and increment the shared state
+        assert_eq!(response1.status, StatusCode::OK);
+        assert_eq!(response2.status, StatusCode::OK);
+        assert_eq!(shared_state.load(Ordering::SeqCst), 2);
+
+        // Test that router2 has the additional route
+        assert!(router2.find_route(&Method::GET, "/decrement").is_some());
+        assert!(router1.find_route(&Method::GET, "/decrement").is_none());
     }
 }

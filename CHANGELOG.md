@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-09-11
+
+### Added
+- **HTTP Server Router Cloning Support**
+  - Implemented `Clone` trait for `Router` to enable router replication and composition
+  - Added `Clone` support for `Route`, `RequestContext`, and `ClientInfo` structs
+  - Router cloning preserves all routes and handlers while maintaining independence
+  - Comprehensive test suite for router cloning functionality with 4 new test cases
+
+- **Enhanced HTTP Server Testing**
+  - Added `test_router_can_be_cloned` - validates basic router cloning functionality
+  - Added `test_router_clone_independence` - ensures cloned routers operate independently
+  - Added `test_router_clone_with_multiple_methods` - tests cloning with all HTTP methods (GET, POST, PUT, DELETE)
+  - Added `test_cloned_router_handlers_work_independently` - verifies handler independence with shared state
+
+### Changed
+- **HTTP Server Architecture Improvements**
+  - Router instances can now be cloned for use in multiple server contexts
+  - Request contexts are now cloneable for easier testing and middleware development
+  - Client information structures support cloning for better request tracking
+
+### Fixed
+- **Compilation Issues**
+  - Fixed missing `Clone` trait implementations preventing router cloning
+  - Resolved compilation errors that were blocking HTTP server feature tests
+  - Fixed trait bound issues with router handler functions
+
+### Internal
+- **Test Coverage Expansion**
+  - HTTP server test count increased from 29 to 33 tests when server feature is enabled
+  - Enhanced test coverage for router functionality and cloning scenarios
+  - Improved validation of router behavior in concurrent and multi-instance scenarios
+
+- **Code Quality Improvements**
+  - Better separation of concerns in HTTP server module
+  - Enhanced type safety with proper trait implementations
+  - Improved documentation for router cloning capabilities
+
+### Backward Compatibility
+- All existing router APIs remain fully compatible
+- Router cloning is an additive feature that doesn't affect existing functionality
+- No breaking changes to public APIs or existing behavior
+
 ## [0.2.1-rc2] - 2025-08-29
 
 ### Added
