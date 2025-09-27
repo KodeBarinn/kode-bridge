@@ -137,7 +137,13 @@ async fn main() -> Result<()> {
     let traffic_source = JsonDataSource::new(generate_traffic_data, Duration::from_secs(2));
 
     // Create server
-    let mut server = IpcStreamServer::with_config(&ipc_path, config)?;
+    #[cfg(unix)]
+    let mut server = IpcStreamServer::with_config(&ipc_path, config)?
+        .with_listener_mode(0o666);
+
+    #[cfg(windows)]
+    let mut server = IpcStreamServer::with_config(&ipc_path, config)?
+        .with_listener_security_descriptor("D:(A;;GA;;;WD)"); // Allow Everyone access
 
     println!("🌟 Server configured for streaming:");
     println!("  📊 Traffic data every 2 seconds");

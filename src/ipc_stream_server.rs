@@ -5,9 +5,18 @@
 
 use crate::errors::{KodeBridgeError, Result};
 use bytes::Bytes;
-use interprocess::local_socket::{
-    tokio::prelude::LocalSocketStream, traits::tokio::Listener, GenericFilePath, ListenerOptions,
-    Name, ToFsName,
+#[cfg(unix)]
+use interprocess::os::unix::local_socket::ListenerOptionsExt;
+#[cfg(windows)]
+use interprocess::os::windows::local_socket::ListenerOptionsExt;
+#[cfg(windows)]
+use interprocess::os::windows::security_descriptor::SecurityDescriptor;
+use interprocess::{
+    local_socket::{
+        tokio::prelude::LocalSocketStream, traits::tokio::Listener, GenericFilePath,
+        ListenerOptions, Name, ToFsName,
+    },
+    TryClone,
 };
 use parking_lot::RwLock;
 use serde_json::Value;
@@ -30,6 +39,8 @@ use tokio::{
 };
 use tokio_stream::{Stream, StreamExt};
 use tracing::{debug, error, info, warn};
+#[cfg(windows)]
+use widestring::U16CString;
 
 /// Configuration for streaming IPC server
 #[derive(Debug, Clone)]
@@ -337,6 +348,7 @@ where
 pub struct IpcStreamServer {
     name: Name<'static>,
     config: StreamServerConfig,
+    listener_options: ListenerOptions<'static>,
     stats: Arc<RwLock<StreamServerStats>>,
     connection_semaphore: Arc<Semaphore>,
     clients: Arc<RwLock<HashMap<u64, StreamClient>>>,
@@ -357,9 +369,12 @@ impl IpcStreamServer {
         let config = StreamServerConfig::default();
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
 
+        let listener_options = ListenerOptions::new();
+
         Ok(Self {
             name,
             config,
+            listener_options,
             stats: Arc::new(RwLock::new(StreamServerStats::new())),
             connection_semaphore,
             clients: Arc::new(RwLock::new(HashMap::new())),
@@ -379,9 +394,12 @@ impl IpcStreamServer {
 
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
 
+        let listener_options = ListenerOptions::new();
+
         Ok(Self {
             name,
             config,
+            listener_options,
             stats: Arc::new(RwLock::new(StreamServerStats::new())),
             connection_semaphore,
             clients: Arc::new(RwLock::new(HashMap::new())),
@@ -389,6 +407,49 @@ impl IpcStreamServer {
             broadcast_tx: None,
             shutdown_tx: None,
         })
+    }
+
+    pub fn with_listener_options(mut self, options: ListenerOptions<'static>) -> Self {
+        self.listener_options = options;
+        self
+    }
+
+    /// Sets the file mode for the Unix domain socket when creating the IPC listener.
+    ///
+    /// # Arguments
+    /// * `mode` - A Unix file permission mask (e.g., `0o660` for owner/group read/write).
+    ///
+    /// # Example
+    /// ```rust
+    /// server = server.with_listener_mode(0o660); // Only owner and group can read/write
+    /// ```
+    #[cfg(unix)]
+    pub fn with_listener_mode(mut self, mode: u16) -> Self {
+        self.listener_options = self.listener_options.mode(mode);
+        self
+    }
+
+    /// Sets the security descriptor for Windows named pipe listener using a SDDL string.
+    ///
+    /// # Arguments
+    /// * `sddl` - Security Descriptor Definition Language string (e.g., `"D:(A;;GA;;;WD)"` for Everyone access).
+    ///
+    /// # Panics
+    /// Will panic if the SDDL string is invalid or cannot be parsed.
+    ///
+    /// # Example
+    /// ```rust
+    /// server = server.with_listener_security_descriptor("D:(A;;GA;;;WD)"); // Allow Everyone access
+    /// ```
+    ///
+    /// # Reference
+    /// See [Microsoft SDDL documentation](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format)
+    #[cfg(windows)]
+    pub fn with_listener_security_descriptor(mut self, sddl: &str) -> Self {
+        let sddl = U16CString::from_str(sddl).expect("Invalid SDDL string");
+        let sd = SecurityDescriptor::deserialize(&sddl).expect("Failed to parse SDDL");
+        self.listener_options = self.listener_options.security_descriptor(sd);
+        self
     }
 
     /// Get server statistics
@@ -422,8 +483,8 @@ impl IpcStreamServer {
         let (broadcast_tx, _) = broadcast::channel(self.config.broadcast_capacity);
         self.broadcast_tx = Some(broadcast_tx.clone());
 
-        // Bind listener
-        let listener = ListenerOptions::new()
+        let listener_options = self.listener_options.try_clone()?;
+        let listener = listener_options
             .name(self.name.clone())
             .create_tokio()
             .map_err(|e| KodeBridgeError::connection(format!("Failed to bind server: {}", e)))?;

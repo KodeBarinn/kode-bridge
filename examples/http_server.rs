@@ -172,7 +172,15 @@ async fn main() -> Result<()> {
         });
 
     // Create and configure server
-    let mut server = IpcHttpServer::with_config(&ipc_path, config)?.router(router);
+    #[cfg(unix)]
+    let mut server = IpcHttpServer::with_config(&ipc_path, config)?
+        .with_listener_mode(0o666) // Allow read/write for everyone
+        .router(router);
+
+    #[cfg(windows)]
+    let mut server = IpcHttpServer::with_config(&ipc_path, config)?
+        .with_listener_security_descriptor("D:(A;;GA;;;WD)") // Allow Everyone access
+        .router(router);
 
     println!("🌟 Server configured with endpoints:");
     println!("  GET    /version     - API version information");

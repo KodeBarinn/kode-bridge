@@ -1,0 +1,5 @@
+{
+  "rust-analyzer.cargo.features": "all"
+  ,
+  // "rust-analyzer.cargo.target": "aarch64-pc-windows-msvc"
+}
