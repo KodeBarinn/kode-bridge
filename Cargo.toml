@@ -35,6 +35,9 @@ pin-project-lite = "0.2.16"
 toml = "0.9.5"
 rand = "0.9.2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.176"
+
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2.0"
 

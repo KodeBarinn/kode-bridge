@@ -517,7 +517,7 @@ impl IpcHttpServer {
     /// let server = IpcHttpServer::new("/tmp/my.sock").unwrap().with_listener_mode(0o660); // Only owner and group can read/write
     /// ```
     #[cfg(unix)]
-    pub fn with_listener_mode(mut self, mode: u16) -> Self {
+    pub fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
         self.listener_options = self.listener_options.mode(mode);
         self
     }
@@ -585,7 +585,7 @@ impl IpcHttpServer {
                                 }
 
                                 let router = self.router.clone();
-                                let config = self.config.clone();
+                                let config = self.config;
                                 let stats = self.stats.clone();
                                 let connection_id = {
                                     let stats = self.stats.read();

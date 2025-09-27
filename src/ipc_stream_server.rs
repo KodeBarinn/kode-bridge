@@ -426,7 +426,7 @@ impl IpcStreamServer {
     /// let server = IpcStreamServer::new("/tmp/my.sock").unwrap().with_listener_mode(0o660); // Only owner and group can read/write
     /// ```
     #[cfg(unix)]
-    pub fn with_listener_mode(mut self, mode: u16) -> Self {
+    pub fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
         self.listener_options = self.listener_options.mode(mode);
         self
     }
