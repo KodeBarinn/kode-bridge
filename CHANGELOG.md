@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2025-09-27
+
+### Added
+- **Listener Permission Configuration Support**
+  - Unix: Added `.with_listener_mode(mode)` for custom socket file permissions (e.g., `0o666`).
+  - Windows: Added `.with_listener_security_descriptor(sddl)` for custom named pipe security descriptors (e.g., `"D:(A;;GA;;;WD)"`).
+- **Dependency Update**
+  - Added `widestring` dependency for Windows platform.
+
+### Changed
+- **IpcHttpServer / IpcStreamServer Construction Improvements**
+  - Added `listener_options` field for customizable listener parameters.
+- **Example Code Enhancement**
+  - Updated `examples/http_server.rs` and `examples/stream_server.rs` to demonstrate cross-platform permission settings.
+
+### Internal
+- **Code Structure Optimization**
+  - Unified listener parameter handling for better extensibility and maintainability.
+
+
 ## [0.2.1] - 2025-09-11
 
 ### Added
