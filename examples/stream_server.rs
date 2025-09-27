@@ -138,8 +138,7 @@ async fn main() -> Result<()> {
 
     // Create server
     #[cfg(unix)]
-    let mut server = IpcStreamServer::with_config(&ipc_path, config)?
-        .with_listener_mode(0o666);
+    let mut server = IpcStreamServer::with_config(&ipc_path, config)?.with_listener_mode(0o666);
 
     #[cfg(windows)]
     let mut server = IpcStreamServer::with_config(&ipc_path, config)?
