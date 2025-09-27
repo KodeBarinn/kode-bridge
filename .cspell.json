@@ -126,7 +126,9 @@
     "FIXME",
     "HACK",
     "XXX",
-    "RUSTSEC"
+    "RUSTSEC",
+    "widestring",
+    "sddl"
   ],
   "patterns": [
     {
