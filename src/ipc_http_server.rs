@@ -559,7 +559,6 @@ impl IpcHttpServer {
     /// Start the server and listen for connections
     pub async fn serve(&mut self) -> Result<()> {
         let listener_options = self.listener_options.try_clone()?;
-        println!("Binding to options: {:?}", listener_options);
         let listener = listener_options
             .name(self.name.clone())
             .create_tokio()

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2025-09-27
+
+### Changed
+- **Removed Unexpected Debug Output**
+  - Eliminated stray `println!` statements from server modules for cleaner logs and production readiness.
+
+### Internal
+- **Minor Code Cleanup**
+  - Improved code hygiene by removing accidental debug prints.
+  - No functional or API changes; purely internal maintenance.
+
 
 ## [0.3.0] - 2025-09-27
 
