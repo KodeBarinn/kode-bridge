@@ -331,8 +331,8 @@ impl Router {
         method: &Method,
         path: &str,
     ) -> Option<(Arc<HandlerFn>, HashMap<String, String>)> {
-        let decoded = match urlencoding::decode(path) {
-            Ok(cow) => cow.into_owned(),
+        let decoded = match Url::parse(&format!("http://localhost{}", path)) {
+            Ok(url) => url.path().to_string(),
             Err(_) => return None,
         };
 
@@ -881,58 +881,6 @@ impl fmt::Debug for IpcHttpServer {
             .field("config", &self.config)
             .field("stats", &self.stats)
             .finish()
-    }
-}
-
-pub mod urlencoding {
-    use std::borrow::Cow;
-
-    #[derive(Debug)]
-    pub struct DecodeError;
-
-    impl std::fmt::Display for DecodeError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "Invalid URL encoding")
-        }
-    }
-
-    impl std::error::Error for DecodeError {}
-
-    pub fn decode(input: &str) -> Result<Cow<'_, str>, DecodeError> {
-        if !input.contains('%') && !input.contains('+') {
-            return Ok(Cow::Borrowed(input));
-        }
-
-        let mut result = Vec::new();
-        let bytes = input.as_bytes();
-        let mut i = 0;
-
-        while i < bytes.len() {
-            match bytes[i] {
-                b'%' => {
-                    if i + 2 < bytes.len() {
-                        let hex_str =
-                            std::str::from_utf8(&bytes[i + 1..i + 3]).map_err(|_| DecodeError)?;
-                        let byte = u8::from_str_radix(hex_str, 16).map_err(|_| DecodeError)?;
-                        result.push(byte);
-                        i += 3;
-                    } else {
-                        return Err(DecodeError);
-                    }
-                }
-                b'+' => {
-                    result.push(b' ');
-                    i += 1;
-                }
-                byte => {
-                    result.push(byte);
-                    i += 1;
-                }
-            }
-        }
-
-        let decoded_str = String::from_utf8(result).map_err(|_| DecodeError)?;
-        Ok(Cow::Owned(decoded_str))
     }
 }
 
