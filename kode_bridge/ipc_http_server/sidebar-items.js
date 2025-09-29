@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["urlencoding"],"struct":["ClientInfo","HttpResponse","IpcHttpServer","RequestContext","ResponseBuilder","Router","ServerConfig","ServerStats"],"type":["HandlerFn"]};
+window.SIDEBAR_ITEMS = {"struct":["ClientInfo","HttpResponse","IpcHttpServer","RequestContext","ResponseBuilder","Router","ServerConfig","ServerStats"],"type":["HandlerFn"]};
