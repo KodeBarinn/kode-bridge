@@ -34,6 +34,7 @@ use tokio::{
     time::timeout,
 };
 use tracing::{debug, error, info, warn};
+use url::Url;
 #[cfg(windows)]
 use widestring::U16CString;
 
@@ -59,13 +60,13 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            max_connections: 200,                   // 增加最大连接数
-            read_timeout: Duration::from_secs(15),  // 减少读超时
-            write_timeout: Duration::from_secs(10), // 减少写超时
-            max_header_size: 4096,                  // 增加头大小限制
-            max_request_size: 10 * 1024 * 1024,     // 增加到10MB支持大的PUT请求
+            max_connections: 200,
+            read_timeout: Duration::from_secs(15),
+            write_timeout: Duration::from_secs(10),
+            max_header_size: 4096,
+            max_request_size: 10 * 1024 * 1024,
             enable_logging: true,
-            shutdown_timeout: Duration::from_secs(3), // 减少关闭超时
+            shutdown_timeout: Duration::from_secs(3),
         }
     }
 }
@@ -77,6 +78,8 @@ pub struct RequestContext {
     pub method: Method,
     /// Request URI
     pub uri: Uri,
+    /// Path parameters (when using route patterns)
+    pub path_params: HashMap<String, String>,
     /// Request headers
     pub headers: HeaderMap,
     /// Request body as bytes
@@ -107,32 +110,17 @@ impl RequestContext {
 
     /// Get query parameters from URI
     pub fn query_params(&self) -> HashMap<String, String> {
-        if let Some(query) = self.uri.query() {
-            query
-                .split('&')
-                .filter_map(|pair| {
-                    let mut parts = pair.split('=');
-                    match (parts.next(), parts.next()) {
-                        (Some(key), Some(value)) => Some((
-                            urlencoding::decode(key).ok()?.to_string(),
-                            urlencoding::decode(value).ok()?.to_string(),
-                        )),
-                        (Some(key), None) => {
-                            Some((urlencoding::decode(key).ok()?.to_string(), String::new()))
-                        }
-                        _ => None,
-                    }
-                })
-                .collect()
-        } else {
-            HashMap::new()
+        match Url::parse(&format!("http://localhost{}", self.uri)) {
+            Ok(url) => url
+                .query_pairs()
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect(),
+            Err(_) => HashMap::new(),
         }
     }
 
     /// Get path parameters (when using route patterns)
     pub fn path_params(&self) -> HashMap<String, String> {
-        // This would be populated by the router during route matching
-        // For now, return empty map
         HashMap::new()
     }
 }
@@ -201,7 +189,6 @@ impl ResponseBuilder {
         let json_bytes = serde_json::to_vec(value).map_err(|e| {
             KodeBridgeError::json_serialize(format!("Failed to serialize JSON: {}", e))
         })?;
-
         Ok(self
             .header("content-type", "application/json")
             .body(json_bytes))
@@ -275,17 +262,8 @@ pub type HandlerFn = Box<
         + Sync,
 >;
 
-/// Route definition for the HTTP server
-#[derive(Clone)]
-struct Route {
-    method: Method,
-    path: String,
-    handler: Arc<HandlerFn>,
-}
-
 /// Router for managing HTTP routes
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct Router {
     trees: HashMap<Method, PathTree<Arc<HandlerFn>>>,
 }
@@ -342,10 +320,8 @@ impl Router {
     {
         let handler_fn: HandlerFn = Box::new(move |ctx| Box::pin(handler(ctx)));
         let handler = Arc::new(handler_fn);
-
         let tree = self.trees.entry(method).or_insert_with(PathTree::new);
         let _ = tree.insert(path, handler);
-
         self
     }
 
@@ -379,12 +355,9 @@ impl Router {
 
     /// Check if a path is safe
     pub fn is_safe_path(&self, path: &str) -> bool {
-        // Reject paths containing directory traversal patterns
         if path.contains("..") || path.contains("\\") {
             return false;
         }
-
-        // Reject paths with null bytes or other control characters
         if path.contains('\0')
             || path
                 .chars()
@@ -392,17 +365,12 @@ impl Router {
         {
             return false;
         }
-
-        // Ensure path starts with /
         if !path.starts_with('/') {
             return false;
         }
-
-        // Reject excessively long paths
         if path.len() > 2048 {
             return false;
         }
-
         true
     }
 }
@@ -416,17 +384,11 @@ impl Default for Router {
 /// Server statistics
 #[derive(Debug, Clone)]
 pub struct ServerStats {
-    /// Total number of connections accepted
     pub total_connections: u64,
-    /// Current active connections
     pub active_connections: u64,
-    /// Total requests processed
     pub total_requests: u64,
-    /// Total responses sent
     pub total_responses: u64,
-    /// Total errors encountered
     pub total_errors: u64,
-    /// Server start time
     pub started_at: Instant,
 }
 
@@ -471,17 +433,14 @@ pub struct IpcHttpServer {
 }
 
 impl IpcHttpServer {
-    /// Create a new HTTP IPC server
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let name = path
             .as_ref()
             .to_fs_name::<GenericFilePath>()
             .map_err(|e| KodeBridgeError::configuration(format!("Invalid server path: {}", e)))?
             .into_owned();
-
         let config = ServerConfig::default();
         let listener_options = ListenerOptions::new();
-
         Ok(Self {
             name,
             config,
@@ -493,17 +452,14 @@ impl IpcHttpServer {
         })
     }
 
-    /// Create a new HTTP IPC server with custom configuration
     pub fn with_config<P: AsRef<Path>>(path: P, config: ServerConfig) -> Result<Self> {
         let name = path
             .as_ref()
             .to_fs_name::<GenericFilePath>()
             .map_err(|e| KodeBridgeError::configuration(format!("Invalid server path: {}", e)))?
             .into_owned();
-
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
         let listener_options = ListenerOptions::new();
-
         Ok(Self {
             name,
             config,
@@ -520,38 +476,12 @@ impl IpcHttpServer {
         self
     }
 
-    /// Sets the file mode for the Unix domain socket when creating the IPC listener.
-    ///
-    /// # Arguments
-    /// * `mode` - A Unix file permission mask (e.g., `0o660` for owner/group read/write).
-    ///
-    /// # Example
-    /// ```rust
-    /// use kode_bridge::IpcHttpServer;
-    ///
-    /// let server = IpcHttpServer::new("/tmp/my.sock").unwrap().with_listener_mode(0o660); // Only owner and group can read/write
-    /// ```
     #[cfg(unix)]
     pub fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
         self.listener_options = self.listener_options.mode(mode);
         self
     }
 
-    /// Sets the security descriptor for Windows named pipe listener using a SDDL string.
-    ///
-    /// # Arguments
-    /// * `sddl` - Security Descriptor Definition Language string (e.g., `"D:(A;;GA;;;WD)"` for Everyone access).
-    ///
-    /// # Panics
-    /// Will panic if the SDDL string is invalid or cannot be parsed.
-    ///
-    /// # Example
-    /// ```rust
-    /// server = server.with_listener_security_descriptor("D:(A;;GA;;;WD)"); // Allow Everyone access
-    /// ```
-    ///
-    /// # Reference
-    /// See [Microsoft SDDL documentation](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format)
     #[cfg(windows)]
     pub fn with_listener_security_descriptor(mut self, sddl: &str) -> Self {
         let sddl = U16CString::from_str(sddl).expect("Invalid SDDL string");
@@ -560,25 +490,21 @@ impl IpcHttpServer {
         self
     }
 
-    /// Set the router for handling requests
     pub fn router(mut self, router: Router) -> Self {
         self.router = Arc::new(router);
         self
     }
 
-    /// Get server statistics
     pub fn stats(&self) -> ServerStats {
         self.stats.read().clone()
     }
 
-    /// Start the server and listen for connections
     pub async fn serve(&mut self) -> Result<()> {
         let listener_options = self.listener_options.try_clone()?;
         let listener = listener_options
             .name(self.name.clone())
             .create_tokio()
             .map_err(|e| KodeBridgeError::connection(format!("Failed to bind server: {}", e)))?;
-
         info!("🚀 HTTP IPC Server listening on {:?}", self.name);
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
@@ -586,11 +512,9 @@ impl IpcHttpServer {
 
         loop {
             tokio::select! {
-                // Accept new connections
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok(stream) => {
-                            // Acquire connection permit
                             if let Ok(permit) = self.connection_semaphore.clone().try_acquire_owned() {
                                 {
                                     let mut stats = self.stats.write();
@@ -618,18 +542,14 @@ impl IpcHttpServer {
                                         let mut stats = stats.write();
                                         stats.total_errors += 1;
                                     }
-
-                                    // Connection finished
                                     {
                                         let mut stats = stats.write();
                                         stats.active_connections = stats.active_connections.saturating_sub(1);
                                     }
-
-                                    drop(permit); // Release connection slot
+                                    drop(permit);
                                 });
                             } else {
                                 warn!("Maximum connections reached, rejecting new connection");
-                                // Connection will be dropped, closing it
                             }
                         }
                         Err(e) => {
@@ -637,8 +557,6 @@ impl IpcHttpServer {
                         }
                     }
                 }
-
-                // Handle shutdown signal
                 _ = &mut shutdown_rx => {
                     info!("Server shutdown requested");
                     break;
@@ -646,7 +564,6 @@ impl IpcHttpServer {
             }
         }
 
-        // Wait for active connections to finish
         let start = Instant::now();
         while self.stats.read().active_connections > 0
             && start.elapsed() < self.config.shutdown_timeout
@@ -663,14 +580,12 @@ impl IpcHttpServer {
         Ok(())
     }
 
-    /// Shutdown the server gracefully
     pub fn shutdown(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
     }
 
-    /// Handle a single client connection
     async fn handle_connection(
         stream: LocalSocketStream,
         connection_id: u64,
@@ -685,34 +600,35 @@ impl IpcHttpServer {
             connected_at: Instant::now(),
         };
 
-        // Wrap stream in BufReader with initial capacity
         let mut stream =
             BufReader::with_capacity(config.max_header_size + config.max_request_size, stream);
 
         loop {
-            // Read HTTP request with timeout
-            let request_data =
-                match timeout(config.read_timeout, Self::read_request(&mut stream)).await {
-                    Ok(Ok(Some(data))) => data,
-                    Ok(Ok(None)) => {
-                        debug!("Connection {} closed by client", connection_id);
-                        break;
-                    }
-                    Ok(Err(e)) => {
-                        error!(
-                            "Failed to read request from connection {}: {}",
-                            connection_id, e
-                        );
-                        return Err(e);
-                    }
-                    Err(_) => {
-                        warn!("Read timeout on connection {}", connection_id);
-                        return Err(KodeBridgeError::timeout_msg("Request read timeout"));
-                    }
-                };
+            let request_data = match timeout(
+                config.read_timeout,
+                Self::read_request(&mut stream, &config),
+            )
+            .await
+            {
+                Ok(Ok(Some(data))) => data,
+                Ok(Ok(None)) => {
+                    debug!("Connection {} closed by client", connection_id);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    error!(
+                        "Failed to read request from connection {}: {}",
+                        connection_id, e
+                    );
+                    return Err(e);
+                }
+                Err(_) => {
+                    warn!("Read timeout on connection {}", connection_id);
+                    return Err(KodeBridgeError::timeout_msg("Request read timeout"));
+                }
+            };
 
-            // Parse HTTP request
-            let request_context =
+            let mut request_context =
                 match Self::parse_request(request_data, &client_info, config.max_request_size) {
                     Ok(ctx) => ctx,
                     Err(e) => {
@@ -736,14 +652,13 @@ impl IpcHttpServer {
                 );
             }
 
-            // Clone the method and URI for logging
             let method = request_context.method.clone();
             let uri = request_context.uri.clone();
 
-            // Find and execute handler
-            let response = if let Some((handler, _params)) =
+            let response = if let Some((handler, params)) =
                 router.find_handler_and_params(&request_context.method, request_context.uri.path())
             {
+                request_context.path_params = params;
                 match timeout(config.write_timeout, (handler)(request_context)).await {
                     Ok(Ok(response)) => response,
                     Ok(Err(e)) => {
@@ -759,7 +674,6 @@ impl IpcHttpServer {
                 HttpResponse::not_found()
             };
 
-            // Send response
             match Self::write_response(&mut stream, &response, &config).await {
                 Ok(_) => {
                     stats.write().total_responses += 1;
@@ -773,45 +687,50 @@ impl IpcHttpServer {
                     return Err(e);
                 }
             }
-
-            // For HTTP/1.0 or if Connection: close, break the loop
-            // For now, we'll keep the connection alive for multiple requests
         }
 
         debug!("Connection {} finished", connection_id);
         Ok(())
     }
 
-    /// Read an HTTP request from the stream
-    async fn read_request(stream: &mut BufReader<LocalSocketStream>) -> Result<Option<BytesMut>> {
-        let mut buffer = BytesMut::with_capacity(8192);
+    async fn read_request(
+        stream: &mut BufReader<LocalSocketStream>,
+        config: &ServerConfig,
+    ) -> Result<Option<BytesMut>> {
+        let mut buffer = BytesMut::with_capacity(config.max_header_size);
 
         loop {
-            // Use read_buf to directly read into buffer without temp array
+            if buffer.len() > config.max_header_size {
+                return Err(KodeBridgeError::validation(
+                    "Header size exceeds maximum allowed",
+                ));
+            }
+
             let n = stream.read_buf(&mut buffer).await?;
 
             if n == 0 {
-                // Connection closed
                 if buffer.is_empty() {
                     return Ok(None);
                 }
                 break;
             }
 
-            // Check for end of HTTP headers (double CRLF)
             if let Some(header_end) = Self::find_header_end(&buffer) {
-                // We have complete headers, now check if we need to read body
                 let headers_str = String::from_utf8_lossy(&buffer[..header_end]);
-
                 if let Some(content_length) = Self::extract_content_length(&headers_str) {
-                    let body_start = header_end + 4; // Skip the \r\n\r\n
+                    let body_start = header_end + 4;
                     let total_expected = body_start + content_length;
 
-                    // Read remaining body if needed
+                    if total_expected > config.max_request_size {
+                        return Err(KodeBridgeError::validation(
+                            "Request size exceeds maximum allowed",
+                        ));
+                    }
+
                     while buffer.len() < total_expected {
                         let n = stream.read_buf(&mut buffer).await?;
                         if n == 0 {
-                            break; // Connection closed unexpectedly
+                            break;
                         }
                     }
                 }
@@ -822,12 +741,10 @@ impl IpcHttpServer {
         Ok(Some(buffer))
     }
 
-    /// Find the end of HTTP headers (double CRLF)
     fn find_header_end(data: &[u8]) -> Option<usize> {
         data.windows(4).position(|window| window == b"\r\n\r\n")
     }
 
-    /// Extract Content-Length from headers
     fn extract_content_length(headers: &str) -> Option<usize> {
         for line in headers.lines() {
             if let Some(value) = line
@@ -842,7 +759,6 @@ impl IpcHttpServer {
         None
     }
 
-    /// Parse raw HTTP request data into RequestContext
     fn parse_request(
         data: BytesMut,
         client_info: &ClientInfo,
@@ -852,8 +768,7 @@ impl IpcHttpServer {
             return Err(KodeBridgeError::validation("Request too large"));
         }
 
-        // Use httparse to parse headers
-        let mut headers = [httparse::EMPTY_HEADER; 64]; // Adjust size as needed
+        let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
         let res = req.parse(&data).map_err(|e| {
             KodeBridgeError::validation(format!("Failed to parse HTTP request: {}", e))
@@ -863,7 +778,6 @@ impl IpcHttpServer {
             return Err(KodeBridgeError::validation("Incomplete HTTP request"));
         }
 
-        // Get method and path (URI)
         let method = req
             .method
             .ok_or_else(|| KodeBridgeError::validation("Missing HTTP method"))?;
@@ -877,7 +791,6 @@ impl IpcHttpServer {
             .parse::<Uri>()
             .map_err(|e| KodeBridgeError::validation(format!("Invalid URI: {}", e)))?;
 
-        // Convert httparse headers to HeaderMap
         let mut header_map = HeaderMap::new();
         for header in req.headers {
             if let (Ok(name), Ok(value)) = (
@@ -890,8 +803,7 @@ impl IpcHttpServer {
             }
         }
 
-        // Body starts after headers
-        let body_start = res.unwrap(); // Offset after headers
+        let body_start = res.unwrap();
         let body = if data.len() > body_start {
             Bytes::copy_from_slice(&data[body_start..])
         } else {
@@ -908,59 +820,51 @@ impl IpcHttpServer {
                 connected_at: client_info.connected_at,
             },
             timestamp: Instant::now(),
+            path_params: HashMap::new(),
         })
     }
 
-    /// Write an HTTP response to the stream
     async fn write_response(
-        stream: &mut tokio::io::BufReader<LocalSocketStream>,
+        stream: &mut BufReader<LocalSocketStream>,
         response: &HttpResponse,
         config: &ServerConfig,
     ) -> Result<()> {
         timeout(config.write_timeout, async {
-            // Estimate initial capacity
-            let mut estimated_size = 64; // Status line + some overhead
-            for (key, value) in &response.headers {
-                estimated_size += key.as_str().len() + value.len() + 10; // ": \r\n"
-            }
-            if !response.headers.contains_key("content-length") {
-                estimated_size += 32; // Content-Length header
-            }
-            estimated_size += 2; // Final \r\n
-            estimated_size += response.body.len();
+            // Use BytesMut for efficient buffer building
+            let mut buf = BytesMut::with_capacity(4096);
 
-            let mut buffer = BytesMut::with_capacity(estimated_size);
-
-            // Write status line
-            let status_line = format!(
-                "HTTP/1.1 {} {}\r\n",
-                response.status.as_u16(),
-                response.status.canonical_reason().unwrap_or("Unknown")
+            // Status line
+            buf.put(
+                format!(
+                    "HTTP/1.1 {} {}\r\n",
+                    response.status.as_u16(),
+                    response.status.canonical_reason().unwrap_or("Unknown")
+                )
+                .as_bytes(),
             );
-            buffer.put_slice(status_line.as_bytes());
 
-            // Write headers
-            for (key, value) in &response.headers {
-                let header_line = format!("{}: {}\r\n", key, value.to_str().unwrap_or(""));
-                buffer.put_slice(header_line.as_bytes());
+            // Headers
+            let mut has_content_length = false;
+            for (key, value) in response.headers.iter() {
+                buf.put(format!("{}: {}\r\n", key, value.to_str().unwrap_or("")).as_bytes());
+                if key.as_str().eq_ignore_ascii_case("content-length") {
+                    has_content_length = true;
+                }
             }
 
-            // Write Content-Length if not already present
-            if !response.headers.contains_key("content-length") {
-                let content_length = format!("Content-Length: {}\r\n", response.body.len());
-                buffer.put_slice(content_length.as_bytes());
+            // Content-Length header if not present
+            if !has_content_length {
+                buf.put(format!("Content-Length: {}\r\n", response.body.len()).as_bytes());
             }
 
-            // End headers
-            buffer.put_slice(b"\r\n");
+            // End of headers
+            buf.put_slice(b"\r\n");
 
-            // Write body
-            if !response.body.is_empty() {
-                buffer.put_slice(&response.body);
-            }
+            // Body
+            buf.put(response.body.as_ref());
 
-            // Write the entire buffer in one go
-            stream.write_all(&buffer).await?;
+            // Write buffer
+            stream.write_all(&buf).await?;
             stream.flush().await?;
 
             Ok::<(), KodeBridgeError>(())
@@ -980,7 +884,6 @@ impl fmt::Debug for IpcHttpServer {
     }
 }
 
-// Helper for URL decoding
 pub mod urlencoding {
     use std::borrow::Cow;
 
@@ -996,7 +899,6 @@ pub mod urlencoding {
     impl std::error::Error for DecodeError {}
 
     pub fn decode(input: &str) -> Result<Cow<'_, str>, DecodeError> {
-        // Safe URL decoding implementation with proper UTF-8 handling
         if !input.contains('%') && !input.contains('+') {
             return Ok(Cow::Borrowed(input));
         }
@@ -1029,7 +931,6 @@ pub mod urlencoding {
             }
         }
 
-        // Validate UTF-8 and return
         let decoded_str = String::from_utf8(result).map_err(|_| DecodeError)?;
         Ok(Cow::Owned(decoded_str))
     }
@@ -1059,25 +960,21 @@ mod tests {
                 Ok(HttpResponse::json(&serde_json::json!({"status": "ok"})).unwrap())
             });
 
-        // Clone the router
         let cloned_router = router.clone();
 
-        // Verify both routers have the same routes
-        assert_eq!(router.routes.len(), cloned_router.routes.len());
-        assert_eq!(router.routes.len(), 2);
+        assert_eq!(router.trees.len(), cloned_router.trees.len());
+        assert_eq!(router.trees.len(), 2);
 
-        // Test that both routers can find the same routes
-        let get_route = router.find_route(&Method::GET, "/test");
-        let cloned_get_route = cloned_router.find_route(&Method::GET, "/test");
+        let get_route = router.find_handler_and_params(&Method::GET, "/test");
+        let cloned_get_route = cloned_router.find_handler_and_params(&Method::GET, "/test");
         assert!(get_route.is_some());
         assert!(cloned_get_route.is_some());
 
-        let post_route = router.find_route(&Method::POST, "/data");
-        let cloned_post_route = cloned_router.find_route(&Method::POST, "/data");
+        let post_route = router.find_handler_and_params(&Method::POST, "/data");
+        let cloned_post_route = cloned_router.find_handler_and_params(&Method::POST, "/data");
         assert!(post_route.is_some());
         assert!(cloned_post_route.is_some());
 
-        // Test that handlers work in both routers
         let ctx = RequestContext {
             method: Method::GET,
             uri: "/test".parse().unwrap(),
@@ -1088,21 +985,19 @@ mod tests {
                 connected_at: Instant::now(),
             },
             timestamp: Instant::now(),
+            path_params: HashMap::new(),
         };
 
-        // Execute handler from original router
-        if let Some(route) = get_route {
-            let response = (route.handler)(ctx.clone()).await.unwrap();
+        if let Some((handler, _)) = get_route {
+            let response = (handler)(ctx.clone()).await.unwrap();
             assert_eq!(response.status, StatusCode::OK);
         }
 
-        // Execute handler from cloned router
-        if let Some(route) = cloned_get_route {
-            let response = (route.handler)(ctx).await.unwrap();
+        if let Some((handler, _)) = cloned_get_route {
+            let response = (handler)(ctx).await.unwrap();
             assert_eq!(response.status, StatusCode::OK);
         }
 
-        // Verify the counter was incremented twice (once for each router)
         assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 
@@ -1113,20 +1008,23 @@ mod tests {
         });
 
         let mut router2 = router1.clone();
-
-        // Add a route to the cloned router
         router2 = router2.post("/new", |_ctx| async { Ok(HttpResponse::text("new")) });
 
-        // Original router should not have the new route
-        assert_eq!(router1.routes.len(), 1);
-        assert_eq!(router2.routes.len(), 2);
+        assert_eq!(router1.trees.len(), 1);
+        assert_eq!(router2.trees.len(), 2);
 
-        // Verify routes
-        assert!(router1.find_route(&Method::GET, "/original").is_some());
-        assert!(router1.find_route(&Method::POST, "/new").is_none());
-
-        assert!(router2.find_route(&Method::GET, "/original").is_some());
-        assert!(router2.find_route(&Method::POST, "/new").is_some());
+        assert!(router1
+            .find_handler_and_params(&Method::GET, "/original")
+            .is_some());
+        assert!(router1
+            .find_handler_and_params(&Method::POST, "/new")
+            .is_none());
+        assert!(router2
+            .find_handler_and_params(&Method::GET, "/original")
+            .is_some());
+        assert!(router2
+            .find_handler_and_params(&Method::POST, "/new")
+            .is_some());
     }
 
     #[test]
@@ -1147,11 +1045,9 @@ mod tests {
 
         let cloned_router = router.clone();
 
-        // Both routers should have all methods
-        assert_eq!(router.routes.len(), 4);
-        assert_eq!(cloned_router.routes.len(), 4);
+        assert_eq!(router.trees.len(), 4);
+        assert_eq!(cloned_router.trees.len(), 4);
 
-        // Test all HTTP methods on both routers
         let methods_and_paths = [
             (Method::GET, "/users"),
             (Method::POST, "/users"),
@@ -1160,8 +1056,10 @@ mod tests {
         ];
 
         for (method, path) in &methods_and_paths {
-            assert!(router.find_route(method, path).is_some());
-            assert!(cloned_router.find_route(method, path).is_some());
+            assert!(router.find_handler_and_params(method, path).is_some());
+            assert!(cloned_router
+                .find_handler_and_params(method, path)
+                .is_some());
         }
     }
 
@@ -1197,22 +1095,59 @@ mod tests {
                 connected_at: Instant::now(),
             },
             timestamp: Instant::now(),
+            path_params: HashMap::new(),
         };
 
-        // Test increment route exists in both routers
-        let route1 = router1.find_route(&Method::GET, "/increment").unwrap();
-        let route2 = router2.find_route(&Method::GET, "/increment").unwrap();
+        let (handler1, _) = router1
+            .find_handler_and_params(&Method::GET, "/increment")
+            .unwrap();
+        let (handler2, _) = router2
+            .find_handler_and_params(&Method::GET, "/increment")
+            .unwrap();
 
-        let response1 = (route1.handler)(ctx.clone()).await.unwrap();
-        let response2 = (route2.handler)(ctx).await.unwrap();
+        let response1 = (handler1)(ctx.clone()).await.unwrap();
+        let response2 = (handler2)(ctx).await.unwrap();
 
-        // Both should work and increment the shared state
         assert_eq!(response1.status, StatusCode::OK);
         assert_eq!(response2.status, StatusCode::OK);
         assert_eq!(shared_state.load(Ordering::SeqCst), 2);
 
-        // Test that router2 has the additional route
-        assert!(router2.find_route(&Method::GET, "/decrement").is_some());
-        assert!(router1.find_route(&Method::GET, "/decrement").is_none());
+        assert!(router2
+            .find_handler_and_params(&Method::GET, "/decrement")
+            .is_some());
+        assert!(router1
+            .find_handler_and_params(&Method::GET, "/decrement")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_path_params() {
+        let router = Router::new().get("/users/:id", |ctx| async move {
+            let params = ctx.path_params();
+            let id = params.get("id").cloned().unwrap_or_default();
+            Ok(HttpResponse::text(format!("User ID: {}", id)))
+        });
+
+        let ctx = RequestContext {
+            method: Method::GET,
+            uri: "/users/123".parse().unwrap(),
+            headers: HeaderMap::new(),
+            body: Bytes::new(),
+            client_info: ClientInfo {
+                connection_id: 1,
+                connected_at: Instant::now(),
+            },
+            timestamp: Instant::now(),
+            path_params: HashMap::new(),
+        };
+
+        let (handler, params) = router
+            .find_handler_and_params(&Method::GET, "/users/123")
+            .unwrap();
+        let mut ctx = ctx;
+        ctx.path_params = params;
+
+        let response = (handler)(ctx).await.unwrap();
+        assert_eq!(response.body, b"User ID: 123");
     }
 }
