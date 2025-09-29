@@ -4,7 +4,7 @@
 //! with a focus on ease of use, performance, and flexibility.
 
 use crate::errors::{KodeBridgeError, Result};
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use http::{HeaderMap, Method, StatusCode, Uri};
 use interprocess::local_socket::{
     tokio::prelude::LocalSocketStream, traits::tokio::Listener, GenericFilePath, ListenerOptions,
@@ -28,7 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
     sync::Semaphore,
     time::timeout,
 };
@@ -47,6 +47,8 @@ pub struct ServerConfig {
     pub write_timeout: Duration,
     /// Maximum request body size in bytes
     pub max_request_size: usize,
+    /// Maximum header size in bytes
+    pub max_header_size: usize,
     /// Enable request/response logging
     pub enable_logging: bool,
     /// Server shutdown timeout
@@ -59,6 +61,7 @@ impl Default for ServerConfig {
             max_connections: 200,                   // 增加最大连接数
             read_timeout: Duration::from_secs(15),  // 减少读超时
             write_timeout: Duration::from_secs(10), // 减少写超时
+            max_header_size: 4096,                  // 增加头大小限制
             max_request_size: 10 * 1024 * 1024,     // 增加到10MB支持大的PUT请求
             enable_logging: true,
             shutdown_timeout: Duration::from_secs(3), // 减少关闭超时
@@ -657,7 +660,7 @@ impl IpcHttpServer {
 
     /// Handle a single client connection
     async fn handle_connection(
-        mut stream: LocalSocketStream,
+        stream: LocalSocketStream,
         connection_id: u64,
         router: Arc<Router>,
         config: ServerConfig,
@@ -669,6 +672,12 @@ impl IpcHttpServer {
             connection_id,
             connected_at: Instant::now(),
         };
+
+        // Wrap stream in BufReader with initial capacity
+        let mut stream = BufReader::with_capacity(
+            config.max_header_size + config.max_request_size,
+            stream,
+        );
 
         loop {
             // Read HTTP request with timeout
@@ -764,48 +773,43 @@ impl IpcHttpServer {
     }
 
     /// Read an HTTP request from the stream
-    async fn read_request(stream: &mut LocalSocketStream) -> Result<Option<Vec<u8>>> {
-        let mut buffer = vec![0u8; 8192];
-        let mut total_data = Vec::new();
+    async fn read_request(stream: &mut BufReader<LocalSocketStream>) -> Result<Option<BytesMut>> {
+        let mut buffer = BytesMut::with_capacity(8192);
 
         loop {
-            match stream.read(&mut buffer).await {
-                Ok(0) => {
-                    // Connection closed
-                    if total_data.is_empty() {
-                        return Ok(None);
-                    }
-                    break;
+            // Use read_buf to directly read into buffer without temp array
+            let n = stream.read_buf(&mut buffer).await?;
+
+            if n == 0 {
+                // Connection closed
+                if buffer.is_empty() {
+                    return Ok(None);
                 }
-                Ok(n) => {
-                    total_data.extend_from_slice(&buffer[..n]);
+                break;
+            }
 
-                    // Check for end of HTTP headers (double CRLF)
-                    if let Some(header_end) = Self::find_header_end(&total_data) {
-                        // We have complete headers, now check if we need to read body
-                        let headers_str = String::from_utf8_lossy(&total_data[..header_end]);
+            // Check for end of HTTP headers (double CRLF)
+            if let Some(header_end) = Self::find_header_end(&buffer) {
+                // We have complete headers, now check if we need to read body
+                let headers_str = String::from_utf8_lossy(&buffer[..header_end]);
 
-                        if let Some(content_length) = Self::extract_content_length(&headers_str) {
-                            let body_start = header_end + 4; // Skip the \r\n\r\n
-                            let total_expected = body_start + content_length;
+                if let Some(content_length) = Self::extract_content_length(&headers_str) {
+                    let body_start = header_end + 4; // Skip the \r\n\r\n
+                    let total_expected = body_start + content_length;
 
-                            // Read remaining body if needed
-                            while total_data.len() < total_expected {
-                                match stream.read(&mut buffer).await {
-                                    Ok(0) => break, // Connection closed unexpectedly
-                                    Ok(n) => total_data.extend_from_slice(&buffer[..n]),
-                                    Err(e) => return Err(KodeBridgeError::Io(e)),
-                                }
-                            }
+                    // Read remaining body if needed
+                    while buffer.len() < total_expected {
+                        let n = stream.read_buf(&mut buffer).await?;
+                        if n == 0 {
+                            break; // Connection closed unexpectedly
                         }
-                        break;
                     }
                 }
-                Err(e) => return Err(KodeBridgeError::Io(e)),
+                break;
             }
         }
 
-        Ok(Some(total_data))
+        Ok(Some(buffer))
     }
 
     /// Find the end of HTTP headers (double CRLF)
@@ -830,7 +834,7 @@ impl IpcHttpServer {
 
     /// Parse raw HTTP request data into RequestContext
     fn parse_request(
-        data: Vec<u8>,
+        data: BytesMut,
         client_info: &ClientInfo,
         max_size: usize,
     ) -> Result<RequestContext> {
@@ -838,64 +842,57 @@ impl IpcHttpServer {
             return Err(KodeBridgeError::validation("Request too large"));
         }
 
-        // Split headers and body
-        let header_end = Self::find_header_end(&data).ok_or_else(|| {
-            KodeBridgeError::validation("Invalid HTTP request: no header end found")
+        // Use httparse to parse headers
+        let mut headers = [httparse::EMPTY_HEADER; 64]; // Adjust size as needed
+        let mut req = httparse::Request::new(&mut headers);
+        let res = req.parse(&data).map_err(|e| {
+            KodeBridgeError::validation(format!("Failed to parse HTTP request: {}", e))
         })?;
 
-        let headers_data = &data[..header_end];
-        let body_data = if data.len() > header_end + 4 {
-            &data[header_end + 4..]
-        } else {
-            &[]
-        };
+        if res.is_partial() {
+            return Err(KodeBridgeError::validation("Incomplete HTTP request"));
+        }
 
-        // Parse request line and headers
-        let headers_str = String::from_utf8_lossy(headers_data);
-        let mut lines = headers_str.lines();
-
-        let request_line = lines
-            .next()
-            .ok_or_else(|| KodeBridgeError::validation("Invalid HTTP request: no request line"))?;
-
-        let mut parts = request_line.split_whitespace();
-        let method = parts
-            .next()
-            .ok_or_else(|| KodeBridgeError::validation("Invalid HTTP request: no method"))?;
-        let uri = parts
-            .next()
-            .ok_or_else(|| KodeBridgeError::validation("Invalid HTTP request: no URI"))?;
-
-        // Parse method
+        // Get method and path (URI)
+        let method = req
+            .method
+            .ok_or_else(|| KodeBridgeError::validation("Missing HTTP method"))?;
         let method = Method::from_bytes(method.as_bytes())
             .map_err(|e| KodeBridgeError::validation(format!("Invalid HTTP method: {}", e)))?;
 
-        // Parse URI
-        let uri = uri
+        let path = req
+            .path
+            .ok_or_else(|| KodeBridgeError::validation("Missing HTTP path"))?;
+        let uri = path
             .parse::<Uri>()
             .map_err(|e| KodeBridgeError::validation(format!("Invalid URI: {}", e)))?;
 
-        // Parse headers
-        let mut headers = HeaderMap::new();
-        for line in lines {
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim();
-                let value = value.trim();
-
-                if let (Ok(header_name), Ok(header_value)) = (
-                    key.parse::<http::header::HeaderName>(),
-                    value.parse::<http::header::HeaderValue>(),
-                ) {
-                    headers.insert(header_name, header_value);
-                }
+        // Convert httparse headers to HeaderMap
+        let mut header_map = HeaderMap::new();
+        for header in req.headers {
+            if let (Ok(name), Ok(value)) = (
+                header.name.parse::<http::header::HeaderName>(),
+                std::str::from_utf8(header.value)
+                    .map_err(|_| KodeBridgeError::validation("Invalid header value"))?
+                    .parse::<http::header::HeaderValue>(),
+            ) {
+                header_map.insert(name, value);
             }
         }
+
+        // Body starts after headers
+        let body_start = res.unwrap(); // Offset after headers
+        let body = if data.len() > body_start {
+            Bytes::copy_from_slice(&data[body_start..])
+        } else {
+            Bytes::new()
+        };
 
         Ok(RequestContext {
             method,
             uri,
-            headers,
-            body: Bytes::copy_from_slice(body_data),
+            headers: header_map,
+            body,
             client_info: ClientInfo {
                 connection_id: client_info.connection_id,
                 connected_at: client_info.connected_at,
@@ -906,40 +903,56 @@ impl IpcHttpServer {
 
     /// Write an HTTP response to the stream
     async fn write_response(
-        stream: &mut LocalSocketStream,
+        stream: &mut tokio::io::BufReader<LocalSocketStream>,
         response: &HttpResponse,
         config: &ServerConfig,
     ) -> Result<()> {
         timeout(config.write_timeout, async {
+            // Estimate initial capacity
+            let mut estimated_size = 64; // Status line + some overhead
+            for (key, value) in &response.headers {
+                estimated_size += key.as_str().len() + value.len() + 10; // ": \r\n"
+            }
+            if !response.headers.contains_key("content-length") {
+                estimated_size += 32; // Content-Length header
+            }
+            estimated_size += 2; // Final \r\n
+            estimated_size += response.body.len();
+
+            let mut buffer = BytesMut::with_capacity(estimated_size);
+
             // Write status line
             let status_line = format!(
                 "HTTP/1.1 {} {}\r\n",
                 response.status.as_u16(),
                 response.status.canonical_reason().unwrap_or("Unknown")
             );
-            stream.write_all(status_line.as_bytes()).await?;
+            buffer.put_slice(status_line.as_bytes());
 
             // Write headers
             for (key, value) in &response.headers {
                 let header_line = format!("{}: {}\r\n", key, value.to_str().unwrap_or(""));
-                stream.write_all(header_line.as_bytes()).await?;
+                buffer.put_slice(header_line.as_bytes());
             }
 
             // Write Content-Length if not already present
             if !response.headers.contains_key("content-length") {
                 let content_length = format!("Content-Length: {}\r\n", response.body.len());
-                stream.write_all(content_length.as_bytes()).await?;
+                buffer.put_slice(content_length.as_bytes());
             }
 
             // End headers
-            stream.write_all(b"\r\n").await?;
+            buffer.put_slice(b"\r\n");
 
             // Write body
             if !response.body.is_empty() {
-                stream.write_all(&response.body).await?;
+                buffer.put_slice(&response.body);
             }
 
+            // Write the entire buffer in one go
+            stream.write_all(&buffer).await?;
             stream.flush().await?;
+
             Ok::<(), KodeBridgeError>(())
         })
         .await

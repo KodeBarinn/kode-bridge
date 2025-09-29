@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
         max_request_size: 1024 * 1024, // 1MB
         enable_logging: true,
         shutdown_timeout: Duration::from_secs(5),
+        ..Default::default()
     };
 
     // Create router with various endpoints
