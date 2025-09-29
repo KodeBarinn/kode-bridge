@@ -521,6 +521,7 @@ dependencies = [
  "interprocess",
  "libc",
  "parking_lot",
+ "path-tree",
  "pin-project-lite",
  "rand",
  "serde",
@@ -649,6 +650,15 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-targets",
+]
+
+[[package]]
+name = "path-tree"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a97453bc21a968f722df730bfe11bd08745cb50d1300b0df2bda131dece136"
+dependencies = [
+ "smallvec",
 ]
 
 [[package]]

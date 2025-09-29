@@ -18,6 +18,7 @@ use interprocess::os::windows::local_socket::ListenerOptionsExt;
 use interprocess::os::windows::security_descriptor::SecurityDescriptor;
 use interprocess::TryClone;
 use parking_lot::RwLock;
+use path_tree::PathTree;
 use std::{
     collections::HashMap,
     fmt,
@@ -284,14 +285,17 @@ struct Route {
 
 /// Router for managing HTTP routes
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Router {
-    routes: Vec<Route>,
+    trees: HashMap<Method, PathTree<Arc<HandlerFn>>>,
 }
 
 impl Router {
     /// Create a new router
     pub fn new() -> Self {
-        Self { routes: Vec::new() }
+        Self {
+            trees: HashMap::new(),
+        }
     }
 
     /// Add a GET route
@@ -337,35 +341,43 @@ impl Router {
         Fut: Future<Output = Result<HttpResponse>> + Send + 'static,
     {
         let handler_fn: HandlerFn = Box::new(move |ctx| Box::pin(handler(ctx)));
+        let handler = Arc::new(handler_fn);
 
-        self.routes.push(Route {
-            method,
-            path: path.to_string(),
-            handler: Arc::new(handler_fn),
-        });
+        let tree = self.trees.entry(method).or_insert_with(PathTree::new);
+        let _ = tree.insert(path, handler);
 
         self
     }
 
-    /// Find a matching route for the given method and path
-    fn find_route(&self, method: &Method, path: &str) -> Option<&Route> {
-        self.routes
-            .iter()
-            .find(|route| route.method == *method && self.path_matches(&route.path, path))
-    }
+    /// Find a matching handler and path parameters for the given method and path
+    pub fn find_handler_and_params(
+        &self,
+        method: &Method,
+        path: &str,
+    ) -> Option<(Arc<HandlerFn>, HashMap<String, String>)> {
+        let decoded = match urlencoding::decode(path) {
+            Ok(cow) => cow.into_owned(),
+            Err(_) => return None,
+        };
 
-    /// Check if a route path matches the request path
-    fn path_matches(&self, route_path: &str, request_path: &str) -> bool {
-        // Validate paths to prevent directory traversal attacks
-        if !self.is_safe_path(request_path) {
-            return false;
+        if !self.is_safe_path(&decoded) {
+            return None;
         }
 
-        // Simple exact match for now
-        // TODO: Implement path parameter matching (e.g., /users/{id})
-        route_path == request_path
+        if let Some(tree) = self.trees.get(method) {
+            if let Some((handler, p)) = tree.find(&decoded) {
+                let params: HashMap<String, String> = p
+                    .params()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect();
+                return Some((handler.clone(), params));
+            }
+        }
+        None
     }
 
+    /// Check if a path is safe
     pub fn is_safe_path(&self, path: &str) -> bool {
         // Reject paths containing directory traversal patterns
         if path.contains("..") || path.contains("\\") {
@@ -674,10 +686,8 @@ impl IpcHttpServer {
         };
 
         // Wrap stream in BufReader with initial capacity
-        let mut stream = BufReader::with_capacity(
-            config.max_header_size + config.max_request_size,
-            stream,
-        );
+        let mut stream =
+            BufReader::with_capacity(config.max_header_size + config.max_request_size, stream);
 
         loop {
             // Read HTTP request with timeout
@@ -731,10 +741,10 @@ impl IpcHttpServer {
             let uri = request_context.uri.clone();
 
             // Find and execute handler
-            let response = if let Some(route) =
-                router.find_route(&request_context.method, request_context.uri.path())
+            let response = if let Some((handler, _params)) =
+                router.find_handler_and_params(&request_context.method, request_context.uri.path())
             {
-                match timeout(config.write_timeout, (route.handler)(request_context)).await {
+                match timeout(config.write_timeout, (handler)(request_context)).await {
                     Ok(Ok(response)) => response,
                     Ok(Err(e)) => {
                         error!("Handler error: {}", e);
