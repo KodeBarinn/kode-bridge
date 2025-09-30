@@ -320,7 +320,7 @@
 <a href=#320 id=320 data-nosnippet>320</a>    {
 <a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">let </span>handler_fn: HandlerFn = Box::new(<span class="kw">move </span>|ctx| Box::pin(handler(ctx)));
 <a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>handler = Arc::new(handler_fn);
-<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">let </span>tree = <span class="self">self</span>.trees.entry(method).or_insert_with(PathTree::new);
+<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">let </span>tree = <span class="self">self</span>.trees.entry(method).or_default();
 <a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let _ </span>= tree.insert(path, handler);
 <a href=#325 id=325 data-nosnippet>325</a>        <span class="self">self
 <a href=#326 id=326 data-nosnippet>326</a>    </span>}
@@ -1096,6 +1096,6 @@
 <a href=#1096 id=1096 data-nosnippet>1096</a>        ctx.path_params = params;
 <a href=#1097 id=1097 data-nosnippet>1097</a>
 <a href=#1098 id=1098 data-nosnippet>1098</a>        <span class="kw">let </span>response = (handler)(ctx).<span class="kw">await</span>.unwrap();
-<a href=#1099 id=1099 data-nosnippet>1099</a>        <span class="macro">assert_eq!</span>(response.body, <span class="string">b"User ID: 123"</span>);
+<a href=#1099 id=1099 data-nosnippet>1099</a>    <span class="macro">assert_eq!</span>(response.body.as_ref(), <span class="string">b"User ID: 123"</span>);
 <a href=#1100 id=1100 data-nosnippet>1100</a>    }
 <a href=#1101 id=1101 data-nosnippet>1101</a>}</code></pre></div></section></main></body></html>
