@@ -320,7 +320,7 @@ impl Router {
     {
         let handler_fn: HandlerFn = Box::new(move |ctx| Box::pin(handler(ctx)));
         let handler = Arc::new(handler_fn);
-    let tree = self.trees.entry(method).or_default();
+        let tree = self.trees.entry(method).or_default();
         let _ = tree.insert(path, handler);
         self
     }
@@ -1096,6 +1096,6 @@ mod tests {
         ctx.path_params = params;
 
         let response = (handler)(ctx).await.unwrap();
-    assert_eq!(response.body.as_ref(), b"User ID: 123");
+        assert_eq!(response.body.as_ref(), b"User ID: 123");
     }
 }
