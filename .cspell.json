@@ -93,7 +93,6 @@
     "retriable",
     "dotenvy",
     "oneshot",
-    "urlencoding",
     "Deque",
     "dotenv",
     "serde",

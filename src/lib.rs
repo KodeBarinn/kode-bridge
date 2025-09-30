@@ -228,28 +228,6 @@ mod tests {
         assert!(!router.is_safe_path(&long_path));
     }
 
-    #[cfg(feature = "server")]
-    #[test]
-    fn test_url_decoding_security() {
-        use crate::ipc_http_server::urlencoding;
-
-        // Test normal URL decoding
-        assert_eq!(urlencoding::decode("hello%20world").unwrap(), "hello world");
-        assert_eq!(urlencoding::decode("hello+world").unwrap(), "hello world");
-        assert_eq!(urlencoding::decode("hello").unwrap(), "hello");
-
-        // Test invalid hex sequences
-        assert!(urlencoding::decode("hello%GG").is_err());
-        assert!(urlencoding::decode("hello%2").is_err());
-
-        // Test non-UTF8 sequences should be rejected
-        // %C0%80 is an overlong encoding of null byte
-        assert!(urlencoding::decode("%C0%80").is_err());
-
-        // Valid UTF-8 sequences should work
-        assert_eq!(urlencoding::decode("%C3%A9").unwrap(), "é"); // é in UTF-8
-    }
-
     #[test]
     fn test_metrics_integration() {
         use crate::metrics::global_metrics;
