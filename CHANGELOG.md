@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2025-09-30
+
+### Added
+- **Path Parameter Routing**
+  - Integrated `path-tree` for improved route management and support for path parameters in IPC server.
+- **New Dependencies**
+  - Added `url`, `form_urlencoded`, and `path-tree` crates for robust URL and path parsing.
+
+### Changed
+- **Standard Library URL Parsing**
+  - Replaced custom URL decoding logic with standard library parsing using the `url` crate.
+- **RequestContext Improvements**
+  - Refactored to include path parameters and use standard query parameter parsing.
+- **Server Configuration Enhancements**
+  - Added `max_header_size` to server config and increased default header size limit.
+- **Feature Flags**
+  - IPC server feature now enables `path-tree` by default.
+- **Code Cleanup**
+  - Removed unused code and legacy URL decoding module.
+- **Test Updates**
+  - Updated and removed tests related to custom URL decoding.
+
+### Fixed
+- **Bugfixes**
+  - Improved header size handling and request parsing robustness.
+  - Fixed configuration defaults and enhanced error handling for request parsing.
+
 ## [0.3.1] - 2025-09-27
 
 ### Changed
