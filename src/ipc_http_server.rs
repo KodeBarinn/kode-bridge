@@ -121,7 +121,7 @@ impl RequestContext {
 
     /// Get path parameters (when using route patterns)
     pub fn path_params(&self) -> HashMap<String, String> {
-        HashMap::new()
+        self.path_params.clone()
     }
 }
 
