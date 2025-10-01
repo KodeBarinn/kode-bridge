@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed issue where custom headers added via `.header()` were stored but not sent with requests.
   - Updated `send_request_with_optimization` to accept and forward headers parameter.
   - Enhanced `RequestBuilder` in `http_client` module to support custom header insertion.
+  - **Documentation**
+    - Fixed incorrect example in `README.md` for HTTP client usage; updated to show correct `.header()` and `.timeout()` usage.
+    - Added new `request` example to `README.md` and examples directory, demonstrating a simple GET request with custom headers and timeout using `IpcHttpClient`.
 
 ### Changed
 - **Clippy Configuration**
