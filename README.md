@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0)
 [![Crates.io](https://img.shields.io/crates/v/kode-bridge.svg)](https://crates.io/crates/kode-bridge)
 
-**[中文](./README_CN.md) | English**
+<!-- **[中文](./README_CN.md) | English** -->
 
 **kode-bridge** is a modern Rust library that implements **HTTP Over IPC** for cross-platform (macOS, Linux, Windows) communication. It provides both **client and server** capabilities with elegant HTTP-style request/response and real-time streaming through Unix Domain Sockets or Windows Named Pipes, featuring a fluent API similar to reqwest with comprehensive connection pooling, advanced error handling, and high-performance streaming.
 
@@ -53,72 +53,54 @@ serde_json = "1.0"
 ### Basic Usage
 
 ```rust
-use kode_bridge::{IpcHttpClient, IpcStreamClient};
-use serde_json::json;
+use dotenvy::dotenv;
+use kode_bridge::{IpcHttpClient, Result};
+use std::env;
 use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Automatically detect platform and use appropriate IPC path
+async fn main() -> Result<()> {
+    dotenv().ok();
+
+    // Use platform-appropriate environment variable with fallback
     #[cfg(unix)]
-    let ipc_path = "/tmp/my_service.sock";
+    let ipc_path = env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/example.sock".to_string());
     #[cfg(windows)]
-    let ipc_path = r"\\.\pipe\my_service";
-    
-    // HTTP-style client for request/response
-    let client = IpcHttpClient::new(ipc_path)?;
-    
-    // 🔥 New fluent API - like reqwest!
+    let ipc_path = env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\example".to_string());
+
+    println!("📡 Connecting to: {}", ipc_path);
+
+    // Create client with modern API
+    let client = IpcHttpClient::new(&ipc_path)?;
+
+    // Use the new fluent API with custom headers and timeout
     let response = client
-        .get("/api/version")
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await?;
-    
-    println!("Status: {}", response.status());
-    println!("Success: {}", response.is_success());
-    
-    // Type-safe JSON parsing
-    #[derive(serde::Deserialize)]
-    struct ApiResponse {
-        version: String,
-        meta: bool,
-    }
-    
-    let data: ApiResponse = response.json()?;
-    println!("Version: {}", data.version);
-    
-    // POST with JSON body
-    let update_data = json!({"user": "alice", "action": "login"});
-    let response = client
-        .post("/api/auth")
-        .json_body(&update_data)
+        .get("/version")
+        .header("Authorization", "Bearer token123")
+        .header("X-Custom-Header", "custom-value")
         .timeout(Duration::from_secs(10))
         .send()
         .await?;
-    
-    if response.is_success() {
-        println!("Auth successful!");
+
+    println!("🔍 Response Details:");
+    println!("  Status: {}", response.status());
+    println!("  Success: {}", response.is_success());
+    println!("  Content Length: {}", response.content_length());
+
+    // Parse and display JSON response
+    match response.json_value() {
+        Ok(json) => println!("📄 JSON Response: {:#}", json),
+        Err(e) => {
+            println!("📄 Raw Response: {:?}", response.body()?);
+            println!("⚠️  JSON parse error: {}", e);
+        }
     }
-    
-    // Real-time streaming client
-    let stream_client = IpcStreamClient::new(ipc_path)?;
-    
-    // Monitor traffic data in real-time
-    #[derive(serde::Deserialize, Debug)]
-    struct TrafficData {
-        up: u64,
-        down: u64,
+
+    // Show pool stats if available
+    if let Some(stats) = client.pool_stats() {
+        println!("📊 Pool Stats: {}", stats);
     }
-    
-    let traffic_data: Vec<TrafficData> = stream_client
-        .get("/traffic")
-        .timeout(Duration::from_secs(5))
-        .json_results()
-        .await?;
-    
-    println!("Collected {} traffic samples", traffic_data.len());
-    
+
     Ok(())
 }
 ```
@@ -126,15 +108,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Server Usage
 
 ```rust
-use kode_bridge::{IpcHttpServer, Router, HttpResponse, Result};
+use kode_bridge::{ipc_http_server::{HttpResponse, IpcHttpServer, Router}, Result};
 use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create HTTP server with routing
     let router = Router::new()
-        .get("/health", |_| async move {
-            HttpResponse::json(&json!({"status": "healthy"}))
+        .get("/version", |_| async move {
+            HttpResponse::json(&json!({"version": "1.0.0"}))
         })
         .post("/api/data", |ctx| async move {
             let data: serde_json::Value = ctx.json()?;

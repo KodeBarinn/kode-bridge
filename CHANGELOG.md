@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.3.3] - 2025-10-02
+
+### Added
+- **Custom Headers Support in HTTP Client**
+  - Added `.header()` method to `RequestBuilder` for setting custom HTTP headers.
+  - HTTP client requests now properly transmit custom headers to the server.
+
+### Fixed
+- **Client Request Headers Bug**
+  - Fixed issue where custom headers added via `.header()` were stored but not sent with requests.
+  - Updated `send_request_with_optimization` to accept and forward headers parameter.
+  - Enhanced `RequestBuilder` in `http_client` module to support custom header insertion.
+
+### Changed
+- **Clippy Configuration**
+  - Updated `too-many-arguments-threshold` from 7 to 10 to accommodate enhanced method signatures.
+
+### Internal
+- **Code Quality**
+  - Improved method signatures for better header propagation throughout the request pipeline.
+  - Added comprehensive header support documentation in code comments.
+
 ## [0.3.2] - 2025-09-30
 
 ### Added

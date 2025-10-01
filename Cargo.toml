@@ -1,7 +1,7 @@
 [package]
 name = "kode-bridge"
 authors = ["Tunglies"]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "Modern HTTP Over IPC library for Rust with both client and server support (Unix sockets, Windows named pipes)."
 license = "Apache-2.0"
@@ -57,6 +57,11 @@ path = "examples/request.rs"
 [[example]]
 name = "request_large"
 path = "examples/request_large.rs"
+
+[[example]]
+name = "server"
+path = "examples/server.rs"
+required-features = ["server"]
 
 [[example]]
 name = "http_server"
