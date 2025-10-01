@@ -151,6 +151,17 @@ impl RequestBuilder {
         }
     }
 
+    /// Add a custom header
+    pub fn header(mut self, key: &str, value: &str) -> Self {
+        if let (Ok(name), Ok(val)) = (
+            HeaderName::from_bytes(key.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
+            self.headers.insert(name, val);
+        }
+        self
+    }
+
     /// Set JSON body with optimized serialization
     pub fn json<T>(mut self, body: &T) -> Result<Self>
     where

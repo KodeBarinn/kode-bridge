@@ -287,6 +287,9 @@ impl IpcHttpClient {
 
         let mut builder = RequestBuilder::new(method.clone(), path.to_string());
 
+        // Note: This method doesn't support custom headers for backward compatibility
+        // Use the fluent API (get(), post(), etc.) for custom headers
+
         if let Some(json_body) = body {
             builder = builder.json(json_body)?;
         }
@@ -327,6 +330,7 @@ impl IpcHttpClient {
         method: &str,
         path: &str,
         body: Option<&Value>,
+        headers: &[(String, String)],
         timeout: Duration,
         is_put_optimized: bool,
         expected_size: Option<usize>,
@@ -335,6 +339,11 @@ impl IpcHttpClient {
             .map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
 
         let mut builder = RequestBuilder::new(method_enum.clone(), path.to_string());
+
+        // Add custom headers
+        for (key, value) in headers {
+            builder = builder.header(key.as_str(), value.as_str());
+        }
 
         if let Some(json_body) = body {
             builder = builder.json(json_body)?;
@@ -612,6 +621,7 @@ impl<'a> HttpRequestBuilder<'a> {
                 self.method.as_str(),
                 &self.path,
                 self.body.as_ref(),
+                &self.headers,
                 timeout,
                 self.put_optimized,
                 self.expected_size,

@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
     // Use the new fluent API with timeout
     let response = client
         .get("/version")
+        .header("foo", "bar")
         .timeout(Duration::from_secs(10))
         .send()
         .await?;

@@ -66,6 +66,8 @@ async fn main() -> Result<()> {
                 version: "1.0.0".to_string(),
                 build: "example-build".to_string(),
             };
+            let headers = _ctx.headers;
+            println!("Headers received: {:?}", headers);
             HttpResponse::json(&version)
         })
         // GET /health - Health check endpoint
