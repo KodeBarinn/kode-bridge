@@ -1,4 +1,7 @@
-use kode_bridge::{ipc_http_server::{HttpResponse, IpcHttpServer, Router}, Result};
+use kode_bridge::{
+    ipc_http_server::{HttpResponse, IpcHttpServer, Router},
+    Result,
+};
 use serde_json::json;
 
 #[tokio::main]
@@ -13,9 +16,8 @@ async fn main() -> Result<()> {
             HttpResponse::json(&json!({"received": data}))
         });
 
-    let mut server = IpcHttpServer::new("/tmp/server.sock")?
-        .router(router);
-    
+    let mut server = IpcHttpServer::new("/tmp/server.sock")?.router(router);
+
     println!("🚀 Server listening on /tmp/server.sock");
     server.serve().await
 }
