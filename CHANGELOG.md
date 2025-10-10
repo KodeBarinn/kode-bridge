@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.3.4] - 2025-10-11
+
+### Changed
+- Retry behavior in IpcHttpClient now follows the configured `max_retries` and `base_delay` values exactly, removing the earlier enforced minimal.
+- Adjusted HTTP client adaptive read-timeout logic to improve responsiveness when reading response bodies.
+
+### Fixed
+- Fixed inconsistent retry and timeout behavior for large PUT/POST requests which could lead to unexpected failures under some connection conditions.
+
+### Internal
+- Internal refinements to large-body handling and connection-pool retry behavior for improved reliability and flexibility.
+
+
+
 ## [0.3.3] - 2025-10-02
 
 ### Added

@@ -182,10 +182,8 @@ impl IpcHttpClient {
 
         // Create retry executor with optimized configuration for different request types
         let retry_config = RetryConfig::for_network_operations()
-            .max_attempts(config.max_retries.min(3)) // 限制最大重试次数以提高响应速度
-            .base_delay(Duration::from_millis(
-                config.pool_config.retry_delay_ms.min(25),
-            )); // 更快的重试
+            .max_attempts(config.max_retries)
+            .base_delay(Duration::from_millis(config.pool_config.retry_delay_ms));
 
         let retry_executor = RetryExecutor::new(retry_config);
 

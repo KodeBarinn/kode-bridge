@@ -399,7 +399,7 @@ where
 
     loop {
         // 使用更短的超时时间，更快地检测结束
-        let timeout_duration = Duration::from_millis(50 + (consecutive_empty_reads * 25).min(200));
+        let timeout_duration = Duration::from_millis(50 + (consecutive_empty_reads * 25));
 
         match tokio::time::timeout(timeout_duration, reader.read(&mut read_buffer)).await {
             Ok(Ok(0)) => {
