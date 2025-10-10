@@ -399,7 +399,7 @@
 <a href=#399 id=399 data-nosnippet>399</a>
 <a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">loop </span>{
 <a href=#401 id=401 data-nosnippet>401</a>        <span class="comment">// 使用更短的超时时间，更快地检测结束
-<a href=#402 id=402 data-nosnippet>402</a>        </span><span class="kw">let </span>timeout_duration = Duration::from_millis(<span class="number">50 </span>+ (consecutive_empty_reads * <span class="number">25</span>).min(<span class="number">200</span>));
+<a href=#402 id=402 data-nosnippet>402</a>        </span><span class="kw">let </span>timeout_duration = Duration::from_millis(<span class="number">50 </span>+ (consecutive_empty_reads * <span class="number">25</span>));
 <a href=#403 id=403 data-nosnippet>403</a>
 <a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">match </span>tokio::time::timeout(timeout_duration, reader.read(<span class="kw-2">&amp;mut </span>read_buffer)).<span class="kw">await </span>{
 <a href=#405 id=405 data-nosnippet>405</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="number">0</span>)) =&gt; {
