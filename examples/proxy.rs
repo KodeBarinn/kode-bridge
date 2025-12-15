@@ -191,16 +191,12 @@ async fn main() -> Result<()> {
                 if let Some(ssrdog_info) = proxies_obj.get("MyGroup") {
                     if let Some(all_proxies) = ssrdog_info.get("all").and_then(|v| v.as_array()) {
                         // 记录切换前的状态
-                        if let Some(current_before) =
-                            ssrdog_info.get("now").and_then(|v| v.as_str())
-                        {
+                        if let Some(current_before) = ssrdog_info.get("now").and_then(|v| v.as_str()) {
                             println!("   � Current proxy BEFORE switch: {}", current_before);
                         }
 
                         // 选择一个不同的代理进行切换测试
-                        let target_proxy = if let Some(current) =
-                            ssrdog_info.get("now").and_then(|v| v.as_str())
-                        {
+                        let target_proxy = if let Some(current) = ssrdog_info.get("now").and_then(|v| v.as_str()) {
                             // 找到一个与当前不同的代理
                             all_proxies
                                 .iter()
@@ -227,31 +223,20 @@ async fn main() -> Result<()> {
 
                         match get_proxy_groups(&client).await {
                             Ok(updated_data) => {
-                                if let Some(updated_proxies) =
-                                    updated_data.get("proxies").and_then(|v| v.as_object())
-                                {
+                                if let Some(updated_proxies) = updated_data.get("proxies").and_then(|v| v.as_object()) {
                                     if let Some(updated_ssrdog) = updated_proxies.get("MyGroup") {
-                                        if let Some(current_after) =
-                                            updated_ssrdog.get("now").and_then(|v| v.as_str())
+                                        if let Some(current_after) = updated_ssrdog.get("now").and_then(|v| v.as_str())
                                         {
-                                            println!(
-                                                "   📍 Current proxy AFTER switch: {}",
-                                                current_after
-                                            );
+                                            println!("   📍 Current proxy AFTER switch: {}", current_after);
 
                                             if current_after == target_proxy {
-                                                println!(
-                                                    "   ✅ Proxy switch WAS SUCCESSFUL despite timeout!"
-                                                );
+                                                println!("   ✅ Proxy switch WAS SUCCESSFUL despite timeout!");
                                                 println!(
                                                     "   💡 The timeout is in the response, not the actual operation"
                                                 );
                                             } else {
                                                 println!("   ❌ Proxy switch did not take effect");
-                                                println!(
-                                                    "   🔍 Expected: {}, Actual: {}",
-                                                    target_proxy, current_after
-                                                );
+                                                println!("   🔍 Expected: {}, Actual: {}", target_proxy, current_after);
                                             }
                                         }
                                     }

@@ -76,15 +76,9 @@ async fn main() -> Result<()> {
             if let Value::Array(ref items) = json {
                 println!("📊 Large Data Stats:");
                 println!("  Array length: {} items", items.len());
-                println!(
-                    "  First item preview: {:#}",
-                    items.first().unwrap_or(&Value::Null)
-                );
+                println!("  First item preview: {:#}", items.first().unwrap_or(&Value::Null));
                 if items.len() > 1 {
-                    println!(
-                        "  Last item preview: {:#}",
-                        items.last().unwrap_or(&Value::Null)
-                    );
+                    println!("  Last item preview: {:#}", items.last().unwrap_or(&Value::Null));
                 }
             } else if let Value::Object(ref obj) = json {
                 println!("📊 Large Object Stats:");

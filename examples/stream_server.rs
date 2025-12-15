@@ -48,8 +48,8 @@ fn generate_traffic_data() -> Result<serde_json::Value> {
     let mut rng = rand::rng();
     let traffic = TrafficData {
         timestamp,
-        up: rng.random_range(0..1000000),   // Random upload bytes
-        down: rng.random_range(0..5000000), // Random download bytes
+        up: rng.random_range(0..1000000),       // Random upload bytes
+        down: rng.random_range(0..5000000),     // Random download bytes
         connections: rng.random_range(10..110), // 10-110 connections
     };
 
@@ -115,11 +115,9 @@ async fn main() -> Result<()> {
 
     // Get IPC path from environment or use default
     #[cfg(unix)]
-    let ipc_path =
-        env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/stream_server.sock".to_string());
+    let ipc_path = env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/stream_server.sock".to_string());
     #[cfg(windows)]
-    let ipc_path =
-        env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\stream_server".to_string());
+    let ipc_path = env::var("CUSTOM_PIPE").unwrap_or_else(|_| r"\\.\pipe\stream_server".to_string());
 
     println!("📡 Server will listen on: {}", ipc_path);
 
@@ -143,8 +141,8 @@ async fn main() -> Result<()> {
     let mut server = IpcStreamServer::with_config(&ipc_path, config)?.with_listener_mode(0o666);
 
     #[cfg(windows)]
-    let mut server = IpcStreamServer::with_config(&ipc_path, config)?
-        .with_listener_security_descriptor("D:(A;;GA;;;WD)"); // Allow Everyone access
+    let mut server =
+        IpcStreamServer::with_config(&ipc_path, config)?.with_listener_security_descriptor("D:(A;;GA;;;WD)"); // Allow Everyone access
 
     println!("🌟 Server configured for streaming:");
     println!("  📊 Traffic data every 2 seconds");
@@ -236,10 +234,7 @@ async fn main() -> Result<()> {
         loop {
             interval.tick().await;
             // In real implementation, get stats from server
-            info!(
-                "📊 Server stats: {} connections, broadcasting data streams",
-                0
-            );
+            info!("📊 Server stats: {} connections, broadcasting data streams", 0);
         }
     });
 

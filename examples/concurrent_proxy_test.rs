@@ -11,15 +11,8 @@ pub struct UpdateProxyPayload {
 }
 
 /// 并发代理测试和延迟测量
-async fn concurrent_proxy_test(
-    client: Arc<IpcHttpClient>,
-    proxy_group: &str,
-    proxies: Vec<&str>,
-) -> Result<()> {
-    println!(
-        "🚀 Starting concurrent proxy testing for group: {}",
-        proxy_group
-    );
+async fn concurrent_proxy_test(client: Arc<IpcHttpClient>, proxy_group: &str, proxies: Vec<&str>) -> Result<()> {
+    println!("🚀 Starting concurrent proxy testing for group: {}", proxy_group);
     println!("📊 Testing {} proxies concurrently", proxies.len());
 
     let start_time = Instant::now();
@@ -132,15 +125,9 @@ async fn concurrent_proxy_test(
     let timeout_rate = timeout_count as f64 / proxies.len() as f64;
     if timeout_rate > 0.3 {
         println!();
-        println!(
-            "⚠️ High timeout rate detected ({:.1}%)",
-            timeout_rate * 100.0
-        );
+        println!("⚠️ High timeout rate detected ({:.1}%)", timeout_rate * 100.0);
         println!("💡 Suggestions:");
-        println!(
-            "   - Reduce concurrent requests (current: {})",
-            proxies.len()
-        );
+        println!("   - Reduce concurrent requests (current: {})", proxies.len());
         println!("   - Increase timeout duration");
         println!("   - Check server load and network conditions");
     }
@@ -149,11 +136,7 @@ async fn concurrent_proxy_test(
 }
 
 /// 测试单个代理切换
-async fn test_proxy_switch(
-    client: &IpcHttpClient,
-    proxy_group: &str,
-    proxy_name: &str,
-) -> Result<bool> {
+async fn test_proxy_switch(client: &IpcHttpClient, proxy_group: &str, proxy_name: &str) -> Result<bool> {
     let path = format!("/proxies/{}", proxy_group);
     let payload = UpdateProxyPayload {
         name: proxy_name.to_string(),
@@ -177,11 +160,7 @@ async fn test_proxy_switch(
 }
 
 /// 验证代理切换是否生效
-async fn verify_proxy_switch(
-    client: &IpcHttpClient,
-    proxy_group: &str,
-    expected_proxy: &str,
-) -> Result<bool> {
+async fn verify_proxy_switch(client: &IpcHttpClient, proxy_group: &str, expected_proxy: &str) -> Result<bool> {
     let response = client
         .get("/proxies")
         .timeout(Duration::from_secs(5))
@@ -263,9 +242,7 @@ async fn main() -> Result<()> {
                         );
 
                         // 执行并发测试
-                        if let Err(e) =
-                            concurrent_proxy_test(Arc::clone(&client), group_name, proxy_names).await
-                        {
+                        if let Err(e) = concurrent_proxy_test(Arc::clone(&client), group_name, proxy_names).await {
                             println!("❌ Concurrent test failed: {}", e);
                         }
 

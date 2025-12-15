@@ -30,9 +30,7 @@ async fn main() -> Result<()> {
     // They demonstrate the API structure and usage patterns
 
     println!("  • GET request example:");
-    println!(
-        "    let response = client.get(\"/api/status\").timeout(Duration::from_secs(5)).send().await?;"
-    );
+    println!("    let response = client.get(\"/api/status\").timeout(Duration::from_secs(5)).send().await?;");
 
     println!("  • POST with JSON example:");
     println!("    let data = json!({{\"user\": \"alice\", \"action\": \"login\"}});");

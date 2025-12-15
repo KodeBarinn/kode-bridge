@@ -180,11 +180,7 @@ impl StreamingResponse {
     }
 
     /// Process stream with timeout and error handling - optimized for better performance
-    pub async fn process_lines_with_timeout<F>(
-        mut self,
-        timeout: Duration,
-        mut handler: F,
-    ) -> Result<()>
+    pub async fn process_lines_with_timeout<F>(mut self, timeout: Duration, mut handler: F) -> Result<()>
     where
         F: FnMut(&str) -> std::result::Result<bool, Box<dyn std::error::Error + Send + Sync>> + Send, // Return false to stop
     {
@@ -334,8 +330,7 @@ where
         }
     }
 
-    let headers_end = headers_end
-        .ok_or_else(|| KodeBridgeError::protocol("Could not find end of HTTP headers"))?;
+    let headers_end = headers_end.ok_or_else(|| KodeBridgeError::protocol("Could not find end of HTTP headers"))?;
 
     // Parse the headers using httparse
     let mut headers = vec![httparse::EMPTY_HEADER; 64];
@@ -353,10 +348,8 @@ where
     // Build HeaderMap
     let mut header_map = HeaderMap::new();
     for header in response.headers {
-        let name =
-            http::HeaderName::from_str(header.name).map_err(|e| KodeBridgeError::Http(e.into()))?;
-        let value = http::HeaderValue::from_bytes(header.value)
-            .map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let name = http::HeaderName::from_str(header.name).map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let value = http::HeaderValue::from_bytes(header.value).map_err(|e| KodeBridgeError::Http(e.into()))?;
         header_map.insert(name, value);
     }
 

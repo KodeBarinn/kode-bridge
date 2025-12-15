@@ -26,10 +26,7 @@ impl ReusableParser {
     }
 
     /// Parse HTTP response
-    pub fn parse_response(
-        &mut self,
-        buffer: &[u8],
-    ) -> Result<(u16, Vec<(String, String)>), httparse::Error> {
+    pub fn parse_response(&mut self, buffer: &[u8]) -> Result<(u16, Vec<(String, String)>), httparse::Error> {
         // Use a local header buffer - still more efficient than recreating parser objects
         let mut headers = vec![httparse::EMPTY_HEADER; 128];
         let mut response = httparse::Response::new(headers.as_mut_slice());
@@ -126,8 +123,7 @@ impl HttpParserCache {
         let to_create = {
             let mut parsers = self.parsers.lock();
             let current_size = parsers.len();
-            let to_create =
-                (count.saturating_sub(current_size)).min(self.max_cache_size - current_size);
+            let to_create = (count.saturating_sub(current_size)).min(self.max_cache_size - current_size);
 
             for _ in 0..to_create {
                 parsers.push_back(ReusableParser::new());
@@ -155,10 +151,7 @@ pub struct CachedParser {
 
 impl CachedParser {
     /// Parse HTTP response
-    pub fn parse_response(
-        &mut self,
-        buffer: &[u8],
-    ) -> Result<(u16, Vec<(String, String)>), httparse::Error> {
+    pub fn parse_response(&mut self, buffer: &[u8]) -> Result<(u16, Vec<(String, String)>), httparse::Error> {
         let parser = self.parser.as_mut().ok_or(httparse::Error::Status)?;
         parser.parse_response(buffer)
     }
@@ -237,9 +230,7 @@ impl Hash for CacheKey {
 
 impl PartialEq for CacheKey {
     fn eq(&self, other: &Self) -> bool {
-        self.method == other.method
-            && self.path == other.path
-            && self.headers_hash == other.headers_hash
+        self.method == other.method && self.path == other.path && self.headers_hash == other.headers_hash
     }
 }
 
@@ -428,10 +419,7 @@ mod tests {
         let headers2 = vec![
             ("Content-Type".to_string(), "application/json".to_string()),
             ("Authorization".to_string(), "Bearer token".to_string()),
-            (
-                "Date".to_string(),
-                "Wed, 21 Oct 2015 07:28:00 GMT".to_string(),
-            ),
+            ("Date".to_string(), "Wed, 21 Oct 2015 07:28:00 GMT".to_string()),
         ];
 
         let key1 = CacheKey::new("GET", "/api", &headers1);

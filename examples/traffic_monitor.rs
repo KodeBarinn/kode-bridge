@@ -49,12 +49,7 @@ impl TrafficMonitor {
                         if let Ok(traffic) = serde_json::from_str::<TrafficData>(line.trim()) {
                             let (up_rate, down_rate) = last
                                 .as_ref()
-                                .map(|l| {
-                                    (
-                                        traffic.up.saturating_sub(l.up),
-                                        traffic.down.saturating_sub(l.down),
-                                    )
-                                })
+                                .map(|l| (traffic.up.saturating_sub(l.up), traffic.down.saturating_sub(l.down)))
                                 .unwrap_or((0, 0));
 
                             tokio::spawn({
@@ -103,8 +98,7 @@ fn fmt_bytes(bytes: u64) -> String {
 async fn main() -> Result<()> {
     dotenv().ok();
 
-    let client =
-        IpcStreamClient::new(env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/example.sock".into()))?;
+    let client = IpcStreamClient::new(env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/example.sock".into()))?;
 
     // Test connection
     if client

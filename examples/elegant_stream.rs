@@ -120,10 +120,7 @@ async fn main() -> Result<()> {
         })
         .await?;
 
-    println!(
-        "✅ Processed {} valid traffic entries",
-        processed_data.len()
-    );
+    println!("✅ Processed {} valid traffic entries", processed_data.len());
     for (i, (bytes, formatted)) in processed_data.iter().take(3).enumerate() {
         println!("  {}. {} bytes ({})", i + 1, bytes, formatted);
     }

@@ -13,8 +13,8 @@ use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
 use interprocess::os::windows::security_descriptor::SecurityDescriptor;
 use interprocess::{
     local_socket::{
-        tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath,
-        ListenerOptions, Name, ToFsName as _,
+        tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath, ListenerOptions, Name,
+        ToFsName as _,
     },
     TryClone as _,
 };
@@ -235,9 +235,7 @@ impl fmt::Display for StreamServerStats {
 /// Data source trait for streaming servers
 pub trait StreamSource: Send + Sync {
     /// Get the next batch of messages to send
-    fn next_messages(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>>;
+    fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>>;
 
     /// Check if the source has more data
     fn has_more(&self) -> bool;
@@ -271,9 +269,7 @@ impl JsonDataSource {
 }
 
 impl StreamSource for JsonDataSource {
-    fn next_messages(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
+    fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
         Box::pin(async move {
             let now = Instant::now();
             if now.duration_since(self.last_generated) >= self.interval {
@@ -320,9 +316,7 @@ impl<S> StreamSource for IteratorSource<S>
 where
     S: Stream<Item = StreamMessage> + Send + Sync + Unpin,
 {
-    fn next_messages(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
+    fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
         Box::pin(async move {
             match self.stream.next().await {
                 Some(message) => Ok(vec![message]),
@@ -630,9 +624,7 @@ impl IpcStreamServer {
 
         // Wait for active connections to finish
         let start = Instant::now();
-        while self.stats.read().active_connections > 0
-            && start.elapsed() < self.config.shutdown_timeout
-        {
+        while self.stats.read().active_connections > 0 && start.elapsed() < self.config.shutdown_timeout {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 

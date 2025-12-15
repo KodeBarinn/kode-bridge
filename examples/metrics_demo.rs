@@ -1,9 +1,9 @@
 use kode_bridge::{
-    global_metrics, init_metrics, BufferPoolStats, ConfigBuilder, HealthChecker, HealthStatus,
-    MetricsSnapshot, ParserCacheStats,
+    global_metrics, init_metrics, BufferPoolStats, ConfigBuilder, HealthChecker, HealthStatus, MetricsSnapshot,
+    ParserCacheStats,
 };
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::sleep;
 
 #[tokio::main]
@@ -106,36 +106,18 @@ fn print_metrics_summary(snapshot: &MetricsSnapshot) {
     println!("┌─────────────────────────────────────────┐");
     println!("│               REQUESTS                  │");
     println!("├─────────────────────────────────────────┤");
-    println!(
-        "│ Total:      {:>10}               │",
-        snapshot.total_requests
-    );
-    println!(
-        "│ Successful: {:>10}               │",
-        snapshot.successful_requests
-    );
-    println!(
-        "│ Failed:     {:>10}               │",
-        snapshot.failed_requests
-    );
-    println!(
-        "│ Active:     {:>10}               │",
-        snapshot.active_requests
-    );
+    println!("│ Total:      {:>10}               │", snapshot.total_requests);
+    println!("│ Successful: {:>10}               │", snapshot.successful_requests);
+    println!("│ Failed:     {:>10}               │", snapshot.failed_requests);
+    println!("│ Active:     {:>10}               │", snapshot.active_requests);
     println!("└─────────────────────────────────────────┘");
 
     println!();
     println!("┌─────────────────────────────────────────┐");
     println!("│             CONNECTIONS                 │");
     println!("├─────────────────────────────────────────┤");
-    println!(
-        "│ Total:      {:>10}               │",
-        snapshot.total_connections
-    );
-    println!(
-        "│ Active:     {:>10}               │",
-        snapshot.active_connections
-    );
+    println!("│ Total:      {:>10}               │", snapshot.total_connections);
+    println!("│ Active:     {:>10}               │", snapshot.active_connections);
     println!("│ Pool Hits:  {:>10}               │", snapshot.pool_hits);
     println!("│ Pool Miss:  {:>10}               │", snapshot.pool_misses);
     println!("└─────────────────────────────────────────┘");
@@ -153,10 +135,7 @@ fn print_metrics_summary(snapshot: &MetricsSnapshot) {
     if let Some(p99) = snapshot.p99_latency {
         println!("│ P99 Latency: {:>8} ms           │", p99.as_millis());
     }
-    println!(
-        "│ Throughput:  {:>8.2} req/s       │",
-        snapshot.requests_per_second
-    );
+    println!("│ Throughput:  {:>8.2} req/s       │", snapshot.requests_per_second);
     println!("└─────────────────────────────────────────┘");
 
     if snapshot.total_errors > 0 {
@@ -164,18 +143,9 @@ fn print_metrics_summary(snapshot: &MetricsSnapshot) {
         println!("┌─────────────────────────────────────────┐");
         println!("│               ERRORS                    │");
         println!("├─────────────────────────────────────────┤");
-        println!(
-            "│ Total:      {:>10}               │",
-            snapshot.total_errors
-        );
-        println!(
-            "│ Timeouts:   {:>10}               │",
-            snapshot.timeout_errors
-        );
-        println!(
-            "│ Connection: {:>10}               │",
-            snapshot.connection_errors
-        );
+        println!("│ Total:      {:>10}               │", snapshot.total_errors);
+        println!("│ Timeouts:   {:>10}               │", snapshot.timeout_errors);
+        println!("│ Connection: {:>10}               │", snapshot.connection_errors);
         println!("└─────────────────────────────────────────┘");
     }
 }

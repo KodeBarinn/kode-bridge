@@ -149,21 +149,9 @@ async fn main() -> Result<()> {
 
     match response.status() {
         200..=299 => println!("✅ Success: {:?}", response.body()),
-        400..=499 => println!(
-            "❌ Client error {}: {:?}",
-            response.status(),
-            response.body()
-        ),
-        500..=599 => println!(
-            "💥 Server error {}: {:?}",
-            response.status(),
-            response.body()
-        ),
-        _ => println!(
-            "🤷 Unknown status {}: {:?}",
-            response.status(),
-            response.body()
-        ),
+        400..=499 => println!("❌ Client error {}: {:?}", response.status(), response.body()),
+        500..=599 => println!("💥 Server error {}: {:?}", response.status(), response.body()),
+        _ => println!("🤷 Unknown status {}: {:?}", response.status(), response.body()),
     }
 
     println!("\n📊 Method 6: DELETE request");

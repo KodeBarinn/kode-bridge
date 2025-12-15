@@ -26,8 +26,8 @@ pub mod ipc_stream_server;
 pub use config::*;
 pub use errors::*;
 pub use metrics::{
-    global_metrics, init_metrics, BufferPoolStats, HealthChecker, HealthReport, HealthStatus,
-    MetricsCollector, MetricsSnapshot, ParserCacheStats,
+    global_metrics, init_metrics, BufferPoolStats, HealthChecker, HealthReport, HealthStatus, MetricsCollector,
+    MetricsSnapshot, ParserCacheStats,
 };
 pub use response::*;
 
@@ -62,9 +62,7 @@ mod test_utils {
         config
     }
 
-    pub fn _setup_test_server(
-        _socket_path: &str,
-    ) -> (tokio::task::JoinHandle<()>, oneshot::Sender<()>) {
+    pub fn _setup_test_server(_socket_path: &str) -> (tokio::task::JoinHandle<()>, oneshot::Sender<()>) {
         // TODO: Fix server API integration
         let (shutdown_tx, _shutdown_rx) = oneshot::channel();
         let handle = tokio::spawn(async move {
@@ -149,24 +147,16 @@ mod tests {
         use crate::errors::KodeBridgeError;
 
         let conn_err = KodeBridgeError::connection("Test connection error");
-        assert!(
-            matches!(conn_err, KodeBridgeError::Connection { message } if message == "Test connection error")
-        );
+        assert!(matches!(conn_err, KodeBridgeError::Connection { message } if message == "Test connection error"));
 
         let proto_err = KodeBridgeError::protocol("Protocol violation");
-        assert!(
-            matches!(proto_err, KodeBridgeError::Protocol { message } if message == "Protocol violation")
-        );
+        assert!(matches!(proto_err, KodeBridgeError::Protocol { message } if message == "Protocol violation"));
 
         let config_err = KodeBridgeError::configuration("Bad config");
-        assert!(
-            matches!(config_err, KodeBridgeError::Configuration { message } if message == "Bad config")
-        );
+        assert!(matches!(config_err, KodeBridgeError::Configuration { message } if message == "Bad config"));
 
         let custom_err = KodeBridgeError::custom("Custom error message");
-        assert!(
-            matches!(custom_err, KodeBridgeError::Custom { message } if message == "Custom error message")
-        );
+        assert!(matches!(custom_err, KodeBridgeError::Custom { message } if message == "Custom error message"));
     }
 
     #[test]

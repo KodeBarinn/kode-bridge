@@ -12,10 +12,7 @@ pub struct TrafficData {
 
 // Extension trait for convenience
 pub trait TrafficMonitorExt {
-    fn monitor_traffic(
-        &self,
-        timeout: Duration,
-    ) -> impl std::future::Future<Output = Result<Vec<TrafficData>>> + Send;
+    fn monitor_traffic(&self, timeout: Duration) -> impl std::future::Future<Output = Result<Vec<TrafficData>>> + Send;
 }
 
 impl TrafficMonitorExt for IpcStreamClient {

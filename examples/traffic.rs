@@ -23,10 +23,7 @@ pub struct ConnectionData {
 
 /// Extension trait for convenient traffic monitoring
 pub trait TrafficMonitorExt {
-    fn monitor_traffic(
-        &self,
-        timeout: Duration,
-    ) -> impl std::future::Future<Output = Result<Vec<TrafficData>>> + Send;
+    fn monitor_traffic(&self, timeout: Duration) -> impl std::future::Future<Output = Result<Vec<TrafficData>>> + Send;
     fn monitor_connections(
         &self,
         timeout: Duration,

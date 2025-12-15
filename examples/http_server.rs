@@ -210,10 +210,7 @@ async fn main() -> Result<()> {
     #[cfg(unix)]
     {
         println!("# Test basic endpoints:");
-        println!(
-            "CUSTOM_SOCK={} cargo run --features=client --example request",
-            ipc_path
-        );
+        println!("CUSTOM_SOCK={} cargo run --features=client --example request", ipc_path);
         println!();
         println!("# Using curl-like tools with HTTP over IPC:");
         println!("# (These would work if you had an HTTP-to-IPC bridge)");

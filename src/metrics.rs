@@ -412,10 +412,7 @@ impl MetricsCollector {
         info!("=== Kode-Bridge Metrics Summary ===");
         info!(
             "Requests: {} total, {} active, {} successful, {} failed",
-            snapshot.total_requests,
-            snapshot.active_requests,
-            snapshot.successful_requests,
-            snapshot.failed_requests
+            snapshot.total_requests, snapshot.active_requests, snapshot.successful_requests, snapshot.failed_requests
         );
 
         if let Some(avg) = snapshot.avg_latency {
@@ -431,8 +428,7 @@ impl MetricsCollector {
             snapshot.total_connections,
             snapshot.active_connections,
             if snapshot.pool_hits + snapshot.pool_misses > 0 {
-                snapshot.pool_hits as f64 / (snapshot.pool_hits + snapshot.pool_misses) as f64
-                    * 100.0
+                snapshot.pool_hits as f64 / (snapshot.pool_hits + snapshot.pool_misses) as f64 * 100.0
             } else {
                 0.0
             }

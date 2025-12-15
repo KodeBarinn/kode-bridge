@@ -5,7 +5,7 @@
 edition = "2021"
 
 # Basic formatting options
-max_width = 100
+max_width = 120
 hard_tabs = false
 tab_spaces = 4
 newline_style = "Unix"

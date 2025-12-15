@@ -7,9 +7,8 @@ use crate::errors::{KodeBridgeError, Result};
 use bytes::{BufMut as _, Bytes, BytesMut};
 use http::{HeaderMap, Method, StatusCode, Uri};
 use interprocess::local_socket::{
-    tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath,
-    ListenerOptions,
-    Name, ToFsName as _,
+    tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath, ListenerOptions, Name,
+    ToFsName as _,
 };
 #[cfg(unix)]
 use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
@@ -97,16 +96,14 @@ impl RequestContext {
     where
         T: serde::de::DeserializeOwned,
     {
-        serde_json::from_slice(&self.body).map_err(|e| {
-            KodeBridgeError::json_parse(format!("Failed to parse request JSON: {}", e))
-        })
+        serde_json::from_slice(&self.body)
+            .map_err(|e| KodeBridgeError::json_parse(format!("Failed to parse request JSON: {}", e)))
     }
 
     /// Get request body as UTF-8 string
     pub fn text(&self) -> Result<String> {
-        String::from_utf8(self.body.to_vec()).map_err(|e| {
-            KodeBridgeError::validation(format!("Invalid UTF-8 in request body: {}", e))
-        })
+        String::from_utf8(self.body.to_vec())
+            .map_err(|e| KodeBridgeError::validation(format!("Invalid UTF-8 in request body: {}", e)))
     }
 
     /// Get query parameters from URI
@@ -187,9 +184,8 @@ impl ResponseBuilder {
 
     /// Set response body from JSON
     pub fn json<T: serde::Serialize>(self, value: &T) -> Result<Self> {
-        let json_bytes = serde_json::to_vec(value).map_err(|e| {
-            KodeBridgeError::json_serialize(format!("Failed to serialize JSON: {}", e))
-        })?;
+        let json_bytes = serde_json::to_vec(value)
+            .map_err(|e| KodeBridgeError::json_serialize(format!("Failed to serialize JSON: {}", e)))?;
         Ok(self
             .header("content-type", "application/json")
             .body(json_bytes))
@@ -257,11 +253,8 @@ impl HttpResponse {
 }
 
 /// Request handler function type
-pub type HandlerFn = Box<
-    dyn Fn(RequestContext) -> Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>>
-        + Send
-        + Sync,
->;
+pub type HandlerFn =
+    Box<dyn Fn(RequestContext) -> Pin<Box<dyn Future<Output = Result<HttpResponse>> + Send>> + Send + Sync>;
 
 /// Router for managing HTTP routes
 #[derive(Clone)]
@@ -272,9 +265,7 @@ pub struct Router {
 impl Router {
     /// Create a new router
     pub fn new() -> Self {
-        Self {
-            trees: HashMap::new(),
-        }
+        Self { trees: HashMap::new() }
     }
 
     /// Add a GET route
@@ -566,9 +557,7 @@ impl IpcHttpServer {
         }
 
         let start = Instant::now();
-        while self.stats.read().active_connections > 0
-            && start.elapsed() < self.config.shutdown_timeout
-        {
+        while self.stats.read().active_connections > 0 && start.elapsed() < self.config.shutdown_timeout {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
@@ -601,26 +590,17 @@ impl IpcHttpServer {
             connected_at: Instant::now(),
         };
 
-        let mut stream =
-            BufReader::with_capacity(config.max_header_size + config.max_request_size, stream);
+        let mut stream = BufReader::with_capacity(config.max_header_size + config.max_request_size, stream);
 
         loop {
-            let request_data = match timeout(
-                config.read_timeout,
-                Self::read_request(&mut stream, &config),
-            )
-            .await
-            {
+            let request_data = match timeout(config.read_timeout, Self::read_request(&mut stream, &config)).await {
                 Ok(Ok(Some(data))) => data,
                 Ok(Ok(None)) => {
                     debug!("Connection {} closed by client", connection_id);
                     break;
                 }
                 Ok(Err(e)) => {
-                    error!(
-                        "Failed to read request from connection {}: {}",
-                        connection_id, e
-                    );
+                    error!("Failed to read request from connection {}: {}", connection_id, e);
                     return Err(e);
                 }
                 Err(_) => {
@@ -629,17 +609,16 @@ impl IpcHttpServer {
                 }
             };
 
-            let mut request_context =
-                match Self::parse_request(request_data, &client_info, config.max_request_size) {
-                    Ok(ctx) => ctx,
-                    Err(e) => {
-                        error!("Failed to parse request: {}", e);
-                        let response = HttpResponse::error(StatusCode::BAD_REQUEST, "Bad Request");
-                        Self::write_response(&mut stream, &response, &config).await?;
-                        stats.write().total_errors += 1;
-                        continue;
-                    }
-                };
+            let mut request_context = match Self::parse_request(request_data, &client_info, config.max_request_size) {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    error!("Failed to parse request: {}", e);
+                    let response = HttpResponse::error(StatusCode::BAD_REQUEST, "Bad Request");
+                    Self::write_response(&mut stream, &response, &config).await?;
+                    stats.write().total_errors += 1;
+                    continue;
+                }
+            };
 
             {
                 let mut stats = stats.write();
@@ -702,9 +681,7 @@ impl IpcHttpServer {
 
         loop {
             if buffer.len() > config.max_header_size {
-                return Err(KodeBridgeError::validation(
-                    "Header size exceeds maximum allowed",
-                ));
+                return Err(KodeBridgeError::validation("Header size exceeds maximum allowed"));
             }
 
             let n = stream.read_buf(&mut buffer).await?;
@@ -723,9 +700,7 @@ impl IpcHttpServer {
                     let total_expected = body_start + content_length;
 
                     if total_expected > config.max_request_size {
-                        return Err(KodeBridgeError::validation(
-                            "Request size exceeds maximum allowed",
-                        ));
+                        return Err(KodeBridgeError::validation("Request size exceeds maximum allowed"));
                     }
 
                     while buffer.len() < total_expected {
@@ -760,20 +735,16 @@ impl IpcHttpServer {
         None
     }
 
-    fn parse_request(
-        data: BytesMut,
-        client_info: &ClientInfo,
-        max_size: usize,
-    ) -> Result<RequestContext> {
+    fn parse_request(data: BytesMut, client_info: &ClientInfo, max_size: usize) -> Result<RequestContext> {
         if data.len() > max_size {
             return Err(KodeBridgeError::validation("Request too large"));
         }
 
         let mut headers = vec![httparse::EMPTY_HEADER; 64].into_boxed_slice();
         let mut req = httparse::Request::new(&mut headers);
-        let res = req.parse(&data).map_err(|e| {
-            KodeBridgeError::validation(format!("Failed to parse HTTP request: {}", e))
-        })?;
+        let res = req
+            .parse(&data)
+            .map_err(|e| KodeBridgeError::validation(format!("Failed to parse HTTP request: {}", e)))?;
 
         if res.is_partial() {
             return Err(KodeBridgeError::validation("Incomplete HTTP request"));
@@ -952,9 +923,7 @@ mod tests {
 
     #[test]
     fn test_router_clone_independence() {
-        let router1 = Router::new().get("/original", |_ctx| async {
-            Ok(HttpResponse::text("original"))
-        });
+        let router1 = Router::new().get("/original", |_ctx| async { Ok(HttpResponse::text("original")) });
 
         let mut router2 = router1.clone();
         router2 = router2.post("/new", |_ctx| async { Ok(HttpResponse::text("new")) });
@@ -979,22 +948,14 @@ mod tests {
     #[test]
     fn test_router_clone_with_multiple_methods() {
         let router = Router::new()
-            .get("/users", |_ctx| async {
-                Ok(HttpResponse::text("GET users"))
-            })
-            .post("/users", |_ctx| async {
-                Ok(HttpResponse::text("POST users"))
-            })
-            .put("/users/123", |_ctx| async {
-                Ok(HttpResponse::text("PUT user"))
-            })
-            .delete("/users/123", |_ctx| async {
-                Ok(HttpResponse::text("DELETE user"))
-            });
+            .get("/users", |_ctx| async { Ok(HttpResponse::text("GET users")) })
+            .post("/users", |_ctx| async { Ok(HttpResponse::text("POST users")) })
+            .put("/users/123", |_ctx| async { Ok(HttpResponse::text("PUT user")) })
+            .delete("/users/123", |_ctx| async { Ok(HttpResponse::text("DELETE user")) });
 
-        let cloned_router = router.clone().get("/extra", |_ctx| async {
-            Ok(HttpResponse::text("extra"))
-        });
+        let cloned_router = router
+            .clone()
+            .get("/extra", |_ctx| async { Ok(HttpResponse::text("extra")) });
 
         assert_eq!(router.trees.len(), 4);
         assert_eq!(cloned_router.trees.len(), 4);

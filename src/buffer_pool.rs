@@ -54,8 +54,7 @@ impl BufferPool {
         let to_create = {
             let mut buffers = self.buffers.lock();
             let current_size = buffers.len();
-            let to_create =
-                (count.saturating_sub(current_size)).min(self.max_pool_size - current_size);
+            let to_create = (count.saturating_sub(current_size)).min(self.max_pool_size - current_size);
 
             for _ in 0..to_create {
                 buffers.push_back(Vec::with_capacity(self.buffer_size));
@@ -185,9 +184,9 @@ pub struct GlobalBufferPools {
 impl GlobalBufferPools {
     pub fn new() -> Self {
         Self {
-            small: BufferPool::new(2048, 32),   // 2KB buffers, more instances
-            medium: BufferPool::new(16384, 64), // 16KB buffers, doubled size and count
-            large: BufferPool::new(131072, 16), // 128KB buffers, doubled size, more instances
+            small: BufferPool::new(2048, 32),         // 2KB buffers, more instances
+            medium: BufferPool::new(16384, 64),       // 16KB buffers, doubled size and count
+            large: BufferPool::new(131072, 16),       // 128KB buffers, doubled size, more instances
             extra_large: BufferPool::new(1048576, 8), // 1MB buffers for very large requests
         }
     }

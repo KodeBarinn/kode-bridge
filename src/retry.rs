@@ -306,10 +306,7 @@ impl RetryExecutor {
                 Ok(result)
             }
             Err(error) => {
-                warn!(
-                    "Operation '{}' failed with error: {}",
-                    operation_name, error
-                );
+                warn!("Operation '{}' failed with error: {}", operation_name, error);
                 Err(KodeBridgeError::custom(format!(
                     "Operation '{}' failed after retries: {}",
                     operation_name, error
@@ -362,14 +359,11 @@ impl RetryExecutor {
                     self.config.base_delay
                 } else {
                     let exponential = (self.config.base_delay.as_millis() as f64
-                        * multiplier.powi((state.attempt - 1) as i32))
-                        as u64;
+                        * multiplier.powi((state.attempt - 1) as i32)) as u64;
                     Duration::from_millis(exponential)
                 }
             }
-            BackoffStrategy::Linear { increment } => {
-                self.config.base_delay + increment * (state.attempt as u32 - 1)
-            }
+            BackoffStrategy::Linear { increment } => self.config.base_delay + increment * (state.attempt as u32 - 1),
         };
 
         // Cap at maximum delay

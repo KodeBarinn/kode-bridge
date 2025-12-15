@@ -172,10 +172,7 @@ impl IpcHttpClient {
             .into_owned();
 
         let pool = if config.enable_pooling {
-            Some(ConnectionPool::new(
-                name.clone(),
-                config.pool_config.clone(),
-            ))
+            Some(ConnectionPool::new(name.clone(), config.pool_config.clone()))
         } else {
             None
         };
@@ -280,8 +277,8 @@ impl IpcHttpClient {
         body: Option<&Value>,
         timeout: Duration,
     ) -> Result<Response> {
-        let method = Method::from_str(method)
-            .map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
+        let method =
+            Method::from_str(method).map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
 
         let mut builder = RequestBuilder::new(method.clone(), path.to_string());
 
@@ -333,8 +330,8 @@ impl IpcHttpClient {
         is_put_optimized: bool,
         expected_size: Option<usize>,
     ) -> Result<Response> {
-        let method_enum = Method::from_str(method)
-            .map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
+        let method_enum =
+            Method::from_str(method).map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
 
         let mut builder = RequestBuilder::new(method_enum.clone(), path.to_string());
 
@@ -401,8 +398,7 @@ impl IpcHttpClient {
 
         // 首先尝试从连接池获取新连接
         if let Some(ref pool) = self.pool {
-            match tokio::time::timeout(Duration::from_millis(20), pool.get_fresh_connection()).await
-            {
+            match tokio::time::timeout(Duration::from_millis(20), pool.get_fresh_connection()).await {
                 Ok(Ok(conn)) => return Ok(Either::Pool(conn)),
                 Ok(Err(_)) | Err(_) => {
                     // 池化新连接失败，继续尝试直接连接
@@ -424,9 +420,7 @@ impl IpcHttpClient {
                     let conn = pool.get_connection().await?;
                     Ok(Either::Pool(conn))
                 } else {
-                    Err(KodeBridgeError::connection(
-                        "Failed to get fresh connection",
-                    ))
+                    Err(KodeBridgeError::connection("Failed to get fresh connection"))
                 }
             }
         }

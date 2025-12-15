@@ -45,11 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
 
         if i == 0 {
-            println!(
-                "   Small PUT (1KB): {} - {:?}",
-                response.status(),
-                start.elapsed()
-            );
+            println!("   Small PUT (1KB): {} - {:?}", response.status(), start.elapsed());
         }
     }
     let small_total = start.elapsed();
@@ -71,11 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
 
         if i == 0 {
-            println!(
-                "   Medium PUT (50KB): {} - {:?}",
-                response.status(),
-                start.elapsed()
-            );
+            println!("   Medium PUT (50KB): {} - {:?}", response.status(), start.elapsed());
         }
     }
     let medium_total = start.elapsed();
@@ -97,11 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
 
         if i == 0 {
-            println!(
-                "   Large PUT (500KB): {} - {:?}",
-                response.status(),
-                start.elapsed()
-            );
+            println!("   Large PUT (500KB): {} - {:?}", response.status(), start.elapsed());
         }
     }
     let large_total = start.elapsed();

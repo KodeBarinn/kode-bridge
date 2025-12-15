@@ -138,10 +138,7 @@ impl RequestBuilder {
     pub fn new(method: Method, uri: String) -> Self {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, HeaderValue::from_static("localhost"));
-        headers.insert(
-            header::USER_AGENT,
-            HeaderValue::from_static("kode-bridge/0.1"),
-        );
+        headers.insert(header::USER_AGENT, HeaderValue::from_static("kode-bridge/0.1"));
 
         Self {
             method,
@@ -153,10 +150,7 @@ impl RequestBuilder {
 
     /// Add a custom header
     pub fn header(mut self, key: &str, value: &str) -> Self {
-        if let (Ok(name), Ok(val)) = (
-            HeaderName::from_bytes(key.as_bytes()),
-            HeaderValue::from_str(value),
-        ) {
+        if let (Ok(name), Ok(val)) = (HeaderName::from_bytes(key.as_bytes()), HeaderValue::from_str(value)) {
             self.headers.insert(name, val);
         }
         self
@@ -173,10 +167,8 @@ impl RequestBuilder {
         // 直接序列化到缓冲区，避免中间Vec分配
         serde_json::to_writer(buffer.as_mut_vec(), body)?;
 
-        self.headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        );
+        self.headers
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         // 避免字符串分配，直接使用itoa
         let content_length = buffer.len().to_string();
@@ -280,10 +272,8 @@ where
     // Build HeaderMap
     let mut header_map = HeaderMap::new();
     for (name, value) in parsed_headers {
-        let header_name =
-            HeaderName::from_str(&name).map_err(|e| KodeBridgeError::Http(e.into()))?;
-        let header_value =
-            HeaderValue::from_str(&value).map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let header_name = HeaderName::from_str(&name).map_err(|e| KodeBridgeError::Http(e.into()))?;
+        let header_value = HeaderValue::from_str(&value).map_err(|e| KodeBridgeError::Http(e.into()))?;
         header_map.insert(header_name, header_value);
     }
 
@@ -308,9 +298,7 @@ where
             Bytes::new()
         } else if len > 10 * 1024 * 1024 {
             // Use streaming for very large responses (>10MB)
-            return Err(KodeBridgeError::protocol(
-                "Response body too large for memory",
-            ));
+            return Err(KodeBridgeError::protocol("Response body too large for memory"));
         } else {
             read_fixed_body(&mut reader, len).await?
         }
@@ -344,8 +332,8 @@ where
         }
 
         // Parse chunk size (hex)
-        let chunk_size = usize::from_str_radix(size_line, 16)
-            .map_err(|_| KodeBridgeError::protocol("Invalid chunk size"))?;
+        let chunk_size =
+            usize::from_str_radix(size_line, 16).map_err(|_| KodeBridgeError::protocol("Invalid chunk size"))?;
 
         if chunk_size == 0 {
             // Last chunk, read final CRLF
@@ -407,9 +395,7 @@ where
             }
             Ok(Ok(n)) => {
                 // 如果数据量大，自动升级缓冲区
-                if body_buffer.len() + n > body_buffer.capacity() * 3 / 4
-                    && body_buffer.capacity() < 131072
-                {
+                if body_buffer.len() + n > body_buffer.capacity() * 3 / 4 && body_buffer.capacity() < 131072 {
                     let mut larger_buffer = if body_buffer.capacity() < 16384 {
                         global_pools().get_large()
                     } else {
