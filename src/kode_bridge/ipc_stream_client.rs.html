@@ -2,8 +2,8 @@
 <a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span>std::time::Duration;
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>interprocess::local_socket::tokio::prelude::LocalSocketStream;
-<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>interprocess::local_socket::traits::tokio::Stream;
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>interprocess::local_socket::{GenericFilePath, Name, ToFsName};
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>interprocess::local_socket::traits::tokio::Stream <span class="kw">as _</span>;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>interprocess::local_socket::{GenericFilePath, Name, ToFsName <span class="kw">as _</span>};
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>serde::de::DeserializeOwned;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>serde_json::Value;
 <a href=#9 id=9 data-nosnippet>9</a>
@@ -11,7 +11,7 @@
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">crate</span>::http_client::RequestBuilder;
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">crate</span>::stream_client::{send_streaming_request, StreamingResponse};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>http::Method;
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>std::str::FromStr;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>std::str::FromStr <span class="kw">as _</span>;
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>tracing::{debug, trace};
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="doccomment">/// Configuration for IPC streaming client
@@ -60,12 +60,12 @@
 <a href=#60 id=60 data-nosnippet>60</a>}
 <a href=#61 id=61 data-nosnippet>61</a>
 <a href=#62 id=62 data-nosnippet>62</a><span class="kw">impl </span>StreamResponse {
-<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">fn </span>new(response: StreamingResponse) -&gt; <span class="self">Self </span>{
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">const fn </span>new(response: StreamingResponse) -&gt; <span class="self">Self </span>{
 <a href=#64 id=64 data-nosnippet>64</a>        <span class="self">Self </span>{ inner: response }
 <a href=#65 id=65 data-nosnippet>65</a>    }
 <a href=#66 id=66 data-nosnippet>66</a>
 <a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// Get the HTTP status code
-<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub fn </span>status(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
+<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub const fn </span>status(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
 <a href=#69 id=69 data-nosnippet>69</a>        <span class="self">self</span>.inner.status_code()
 <a href=#70 id=70 data-nosnippet>70</a>    }
 <a href=#71 id=71 data-nosnippet>71</a>
@@ -103,7 +103,7 @@
 <a href=#103 id=103 data-nosnippet>103</a>    <span class="doccomment">/// Process stream in real-time with a handler
 <a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">pub async fn </span>process_lines&lt;F&gt;(<span class="self">self</span>, timeout: Duration, <span class="kw-2">mut </span>handler: F) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt;
 <a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">where
-<a href=#106 id=106 data-nosnippet>106</a>        </span>F: FnMut(<span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;&gt;,
+<a href=#106 id=106 data-nosnippet>106</a>        </span>F: FnMut(<span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;&gt; + Send,
 <a href=#107 id=107 data-nosnippet>107</a>    {
 <a href=#108 id=108 data-nosnippet>108</a>        <span class="self">self</span>.inner
 <a href=#109 id=109 data-nosnippet>109</a>            .process_lines_with_timeout(timeout, |line| {
@@ -115,7 +115,7 @@
 <a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Process stream with custom JSON processing
 <a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub async fn </span>process_json&lt;F, T&gt;(<span class="self">self</span>, timeout: Duration, handler: F) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;T&gt;&gt;
 <a href=#117 id=117 data-nosnippet>117</a>    <span class="kw">where
-<a href=#118 id=118 data-nosnippet>118</a>        </span>F: FnMut(<span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;,
+<a href=#118 id=118 data-nosnippet>118</a>        </span>F: FnMut(<span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; + Send,
 <a href=#119 id=119 data-nosnippet>119</a>        T: Send + <span class="lifetime">'static</span>,
 <a href=#120 id=120 data-nosnippet>120</a>    {
 <a href=#121 id=121 data-nosnippet>121</a>        <span class="self">self</span>.inner.process_json(timeout, handler).<span class="kw">await
@@ -203,8 +203,8 @@
 <a href=#203 id=203 data-nosnippet>203</a>        body: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Value&gt;,
 <a href=#204 id=204 data-nosnippet>204</a>        timeout: Duration,
 <a href=#205 id=205 data-nosnippet>205</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;StreamingResponse&gt; {
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>method = Method::from_str(method)
-<a href=#207 id=207 data-nosnippet>207</a>            .map_err(|e| KodeBridgeError::invalid_request(<span class="macro">format!</span>(<span class="string">"Invalid method: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>method =
+<a href=#207 id=207 data-nosnippet>207</a>            Method::from_str(method).map_err(|e| KodeBridgeError::invalid_request(<span class="macro">format!</span>(<span class="string">"Invalid method: {}"</span>, e)))<span class="question-mark">?</span>;
 <a href=#208 id=208 data-nosnippet>208</a>
 <a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span><span class="kw-2">mut </span>builder = RequestBuilder::new(method, path.to_string());
 <a href=#210 id=210 data-nosnippet>210</a>
@@ -282,7 +282,7 @@
 <a href=#282 id=282 data-nosnippet>282</a>    </span>}
 <a href=#283 id=283 data-nosnippet>283</a>
 <a href=#284 id=284 data-nosnippet>284</a>    <span class="doccomment">/// Set custom timeout
-<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">pub fn </span>timeout(<span class="kw-2">mut </span><span class="self">self</span>, timeout: Duration) -&gt; <span class="self">Self </span>{
+<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">pub const fn </span>timeout(<span class="kw-2">mut </span><span class="self">self</span>, timeout: Duration) -&gt; <span class="self">Self </span>{
 <a href=#286 id=286 data-nosnippet>286</a>        <span class="self">self</span>.timeout = timeout;
 <a href=#287 id=287 data-nosnippet>287</a>        <span class="self">self
 <a href=#288 id=288 data-nosnippet>288</a>    </span>}
@@ -301,33 +301,28 @@
 <a href=#301 id=301 data-nosnippet>301</a>    </span><span class="kw">pub async fn </span>send(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;StreamResponse&gt; {
 <a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>response = <span class="self">self
 <a href=#303 id=303 data-nosnippet>303</a>            </span>.client
-<a href=#304 id=304 data-nosnippet>304</a>            .send_request_internal(
-<a href=#305 id=305 data-nosnippet>305</a>                <span class="self">self</span>.method.as_str(),
-<a href=#306 id=306 data-nosnippet>306</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.path,
-<a href=#307 id=307 data-nosnippet>307</a>                <span class="self">self</span>.body.as_ref(),
-<a href=#308 id=308 data-nosnippet>308</a>                <span class="self">self</span>.timeout,
-<a href=#309 id=309 data-nosnippet>309</a>            )
-<a href=#310 id=310 data-nosnippet>310</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#311 id=311 data-nosnippet>311</a>
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="prelude-val">Ok</span>(StreamResponse::new(response))
-<a href=#313 id=313 data-nosnippet>313</a>    }
-<a href=#314 id=314 data-nosnippet>314</a>
-<a href=#315 id=315 data-nosnippet>315</a>    <span class="doccomment">/// Send and get JSON results automatically (convenience method)
-<a href=#316 id=316 data-nosnippet>316</a>    </span><span class="kw">pub async fn </span>json_results&lt;T&gt;(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;T&gt;&gt;
-<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">where
-<a href=#318 id=318 data-nosnippet>318</a>        </span>T: DeserializeOwned + Send,
-<a href=#319 id=319 data-nosnippet>319</a>    {
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>response = <span class="self">self</span>.send().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#321 id=321 data-nosnippet>321</a>        response.json_results().<span class="kw">await
-<a href=#322 id=322 data-nosnippet>322</a>    </span>}
-<a href=#323 id=323 data-nosnippet>323</a>
-<a href=#324 id=324 data-nosnippet>324</a>    <span class="doccomment">/// Send and process lines with a handler (convenience method)
-<a href=#325 id=325 data-nosnippet>325</a>    </span><span class="kw">pub async fn </span>process_lines&lt;F&gt;(<span class="self">self</span>, handler: F) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt;
-<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">where
-<a href=#327 id=327 data-nosnippet>327</a>        </span>F: FnMut(<span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;&gt;,
-<a href=#328 id=328 data-nosnippet>328</a>    {
-<a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">let </span>timeout = <span class="self">self</span>.timeout;
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">let </span>response = <span class="self">self</span>.send().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#331 id=331 data-nosnippet>331</a>        response.process_lines(timeout, handler).<span class="kw">await
-<a href=#332 id=332 data-nosnippet>332</a>    </span>}
-<a href=#333 id=333 data-nosnippet>333</a>}</code></pre></div></section></main></body></html>
+<a href=#304 id=304 data-nosnippet>304</a>            .send_request_internal(<span class="self">self</span>.method.as_str(), <span class="kw-2">&amp;</span><span class="self">self</span>.path, <span class="self">self</span>.body.as_ref(), <span class="self">self</span>.timeout)
+<a href=#305 id=305 data-nosnippet>305</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#306 id=306 data-nosnippet>306</a>
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="prelude-val">Ok</span>(StreamResponse::new(response))
+<a href=#308 id=308 data-nosnippet>308</a>    }
+<a href=#309 id=309 data-nosnippet>309</a>
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="doccomment">/// Send and get JSON results automatically (convenience method)
+<a href=#311 id=311 data-nosnippet>311</a>    </span><span class="kw">pub async fn </span>json_results&lt;T&gt;(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;T&gt;&gt;
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">where
+<a href=#313 id=313 data-nosnippet>313</a>        </span>T: DeserializeOwned + Send,
+<a href=#314 id=314 data-nosnippet>314</a>    {
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>response = <span class="self">self</span>.send().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#316 id=316 data-nosnippet>316</a>        response.json_results().<span class="kw">await
+<a href=#317 id=317 data-nosnippet>317</a>    </span>}
+<a href=#318 id=318 data-nosnippet>318</a>
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="doccomment">/// Send and process lines with a handler (convenience method)
+<a href=#320 id=320 data-nosnippet>320</a>    </span><span class="kw">pub async fn </span>process_lines&lt;F&gt;(<span class="self">self</span>, handler: F) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt;
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">where
+<a href=#322 id=322 data-nosnippet>322</a>        </span>F: FnMut(<span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;&gt; + Send,
+<a href=#323 id=323 data-nosnippet>323</a>    {
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>timeout = <span class="self">self</span>.timeout;
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>response = <span class="self">self</span>.send().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#326 id=326 data-nosnippet>326</a>        response.process_lines(timeout, handler).<span class="kw">await
+<a href=#327 id=327 data-nosnippet>327</a>    </span>}
+<a href=#328 id=328 data-nosnippet>328</a>}</code></pre></div></section></main></body></html>
