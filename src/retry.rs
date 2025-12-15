@@ -1,5 +1,5 @@
 use crate::errors::KodeBridgeError;
-use rand::{random_range, rngs::StdRng, SeedableRng};
+use rand::{random_range, rngs::StdRng, SeedableRng as _};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
@@ -77,43 +77,43 @@ impl RetryConfig {
     }
 
     /// Set maximum retry attempts
-    pub fn max_attempts(mut self, max_attempts: usize) -> Self {
+    pub const fn max_attempts(mut self, max_attempts: usize) -> Self {
         self.max_attempts = max_attempts;
         self
     }
 
     /// Set base delay
-    pub fn base_delay(mut self, delay: Duration) -> Self {
+    pub const fn base_delay(mut self, delay: Duration) -> Self {
         self.base_delay = delay;
         self
     }
 
     /// Set maximum delay
-    pub fn max_delay(mut self, delay: Duration) -> Self {
+    pub const fn max_delay(mut self, delay: Duration) -> Self {
         self.max_delay = delay;
         self
     }
 
     /// Use exponential backoff strategy
-    pub fn exponential_backoff(mut self, multiplier: f64) -> Self {
+    pub const fn exponential_backoff(mut self, multiplier: f64) -> Self {
         self.backoff_strategy = BackoffStrategy::Exponential { multiplier };
         self
     }
 
     /// Use fixed backoff strategy
-    pub fn fixed_backoff(mut self) -> Self {
+    pub const fn fixed_backoff(mut self) -> Self {
         self.backoff_strategy = BackoffStrategy::Fixed;
         self
     }
 
     /// Use linear backoff strategy
-    pub fn linear_backoff(mut self, increment: Duration) -> Self {
+    pub const fn linear_backoff(mut self, increment: Duration) -> Self {
         self.backoff_strategy = BackoffStrategy::Linear { increment };
         self
     }
 
     /// Set jitter strategy
-    pub fn jitter(mut self, strategy: JitterStrategy) -> Self {
+    pub const fn jitter(mut self, strategy: JitterStrategy) -> Self {
         self.jitter_strategy = strategy;
         self
     }
@@ -199,15 +199,15 @@ impl RetryState {
         Self::default()
     }
 
-    pub fn attempt(&self) -> usize {
+    pub const fn attempt(&self) -> usize {
         self.attempt
     }
 
-    pub fn total_elapsed(&self) -> Duration {
+    pub const fn total_elapsed(&self) -> Duration {
         self.total_elapsed
     }
 
-    pub fn last_delay(&self) -> Duration {
+    pub const fn last_delay(&self) -> Duration {
         self.last_delay
     }
 }
@@ -218,15 +218,16 @@ pub struct RetryExecutor {
 }
 
 impl RetryExecutor {
-    pub fn new(config: RetryConfig) -> Self {
+    pub const fn new(config: RetryConfig) -> Self {
         Self { config }
     }
 
     /// Execute operation with retry logic
     pub async fn execute<F, Fut, T>(&self, mut operation: F) -> Result<T, KodeBridgeError>
     where
-        F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<T, KodeBridgeError>>,
+        F: FnMut() -> Fut + Send,
+        Fut: std::future::Future<Output = Result<T, KodeBridgeError>> + Send,
+        T: Send,
     {
         let mut state = RetryState::new();
         let mut rng = StdRng::from_seed([0u8; 32]); // Use deterministic seed for Send compatibility
@@ -293,8 +294,9 @@ impl RetryExecutor {
         operation: F,
     ) -> Result<T, KodeBridgeError>
     where
-        F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<T, KodeBridgeError>>,
+        F: FnMut() -> Fut + Send,
+        Fut: std::future::Future<Output = Result<T, KodeBridgeError>> + Send,
+        T: Send,
     {
         debug!("Starting retry execution for operation: {}", operation_name);
 
@@ -317,7 +319,7 @@ impl RetryExecutor {
     }
 
     /// Default retry logic based on error type
-    fn default_should_retry(&self, error: &KodeBridgeError, attempt: usize) -> bool {
+    const fn default_should_retry(&self, error: &KodeBridgeError, attempt: usize) -> bool {
         use KodeBridgeError::*;
 
         match error {
@@ -403,8 +405,9 @@ impl RetryExecutor {
 /// Convenience function for simple retry operations
 pub async fn retry<F, Fut, T>(config: RetryConfig, operation: F) -> Result<T, KodeBridgeError>
 where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T, KodeBridgeError>>,
+    F: FnMut() -> Fut + Send,
+    Fut: std::future::Future<Output = Result<T, KodeBridgeError>> + Send,
+    T: Send,
 {
     RetryExecutor::new(config).execute(operation).await
 }
@@ -412,8 +415,9 @@ where
 /// Convenience function with default configuration
 pub async fn retry_default<F, Fut, T>(operation: F) -> Result<T, KodeBridgeError>
 where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T, KodeBridgeError>>,
+    F: FnMut() -> Fut + Send,
+    Fut: std::future::Future<Output = Result<T, KodeBridgeError>> + Send,
+    T: Send,
 {
     retry(RetryConfig::default(), operation).await
 }
@@ -436,7 +440,7 @@ enum CircuitState {
 }
 
 impl CircuitBreaker {
-    pub fn new(failure_threshold: usize, recovery_timeout: Duration) -> Self {
+    pub const fn new(failure_threshold: usize, recovery_timeout: Duration) -> Self {
         Self {
             failure_threshold,
             recovery_timeout,
@@ -448,8 +452,9 @@ impl CircuitBreaker {
 
     pub async fn execute<F, Fut, T>(&mut self, operation: F) -> Result<T, KodeBridgeError>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<T, KodeBridgeError>>,
+        F: FnOnce() -> Fut + Send,
+        Fut: std::future::Future<Output = Result<T, KodeBridgeError>> + Send,
+        T: Send,
     {
         if self.state == CircuitState::Open {
             if let Some(last_failure) = self.last_failure_time {
@@ -493,11 +498,11 @@ impl CircuitBreaker {
         }
     }
 
-    pub fn is_open(&self) -> bool {
+    pub const fn is_open(&self) -> bool {
         matches!(self.state, CircuitState::Open)
     }
 
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.consecutive_failures = 0;
         self.last_failure_time = None;
         self.state = CircuitState::Closed;
@@ -532,7 +537,7 @@ mod tests {
 
         let result = executor
             .execute(|| {
-                let count = attempt_count.clone();
+                let count = Arc::clone(&attempt_count);
                 async move {
                     let current = count.fetch_add(1, Ordering::SeqCst);
                     if current < 2 {
@@ -558,7 +563,7 @@ mod tests {
 
         let result = executor
             .execute(|| {
-                let count = attempt_count.clone();
+                let count = Arc::clone(&attempt_count);
                 async move {
                     count.fetch_add(1, Ordering::SeqCst);
                     Err::<i32, _>(KodeBridgeError::connection("Always fails"))
@@ -580,7 +585,7 @@ mod tests {
 
         let result = executor
             .execute(|| {
-                let count = attempt_count.clone();
+                let count = Arc::clone(&attempt_count);
                 async move {
                     count.fetch_add(1, Ordering::SeqCst);
                     Err::<i32, _>(KodeBridgeError::ClientError { status: 400 })

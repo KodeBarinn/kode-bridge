@@ -1,6 +1,6 @@
 use crate::errors::{KodeBridgeError, Result};
 use interprocess::local_socket::tokio::prelude::LocalSocketStream;
-use interprocess::local_socket::traits::tokio::Stream;
+use interprocess::local_socket::traits::tokio::Stream as _;
 use interprocess::local_socket::Name;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -47,17 +47,17 @@ impl Default for PoolConfig {
 
 impl PoolConfig {
     /// Get max idle time as Duration
-    pub fn max_idle_time(&self) -> Duration {
+    pub const fn max_idle_time(&self) -> Duration {
         Duration::from_millis(self.max_idle_time_ms)
     }
 
     /// Get connection timeout as Duration
-    pub fn connection_timeout(&self) -> Duration {
+    pub const fn connection_timeout(&self) -> Duration {
         Duration::from_millis(self.connection_timeout_ms)
     }
 
     /// Get retry delay as Duration
-    pub fn retry_delay(&self) -> Duration {
+    pub const fn retry_delay(&self) -> Duration {
         Duration::from_millis(self.retry_delay_ms)
     }
 }
@@ -191,8 +191,7 @@ impl ConnectionPoolInner {
         for _ in 0..count {
             match LocalSocketStream::connect(self.name.clone()).await {
                 Ok(stream) => {
-                    let mut fresh = self.fresh_connections.lock();
-                    fresh.push_back(stream);
+                    self.fresh_connections.lock().push_back(stream);
                     successful += 1;
                 }
                 Err(_) => break,
@@ -256,16 +255,24 @@ impl ConnectionPoolInner {
     }
 
     fn return_connection(&self, stream: LocalSocketStream) {
-        let mut connections = self.connections.lock();
-
         // 减少活跃连接计数
         self.active_connections
             .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Only keep the connection if we haven't exceeded max_size
-        if connections.len() < self.config.max_size {
-            connections.push_back((stream, Instant::now()));
-            trace!("Returned connection to pool, {} total", connections.len());
+        let (kept, pool_size) = {
+            let mut connections = self.connections.lock();
+
+            // Only keep the connection if we haven't exceeded max_size
+            if connections.len() < self.config.max_size {
+                connections.push_back((stream, Instant::now()));
+                (true, connections.len())
+            } else {
+                (false, connections.len())
+            }
+        };
+
+        if kept {
+            trace!("Returned connection to pool, {} total", pool_size);
         } else {
             trace!("Pool full, dropping connection");
         }
@@ -297,7 +304,7 @@ impl ConnectionPoolInner {
 
         // 再次检查池化连接（避免不必要的连接创建）
         if let Some(stream) = self.get_pooled_connection() {
-            permit.forget(); // Release the permit since we're using a pooled connection
+            drop(permit);
             return Ok(stream);
         }
 
@@ -308,13 +315,14 @@ impl ConnectionPoolInner {
         // 创建新连接
         match self.create_connection().await {
             Ok(stream) => {
-                permit.forget(); // Release the permit
+                drop(permit);
                 Ok(stream)
             }
             Err(e) => {
                 // 出错时减少活跃连接计数
                 self.active_connections
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                drop(permit);
                 Err(e)
             }
         }
@@ -330,7 +338,7 @@ impl ConnectionPoolInner {
 
         // Get fresh connection directly with optimized parameters
         let stream = self.get_fresh_connection().await?;
-        permit.forget(); // Release the permit
+        drop(permit);
         Ok(stream)
     }
 }
@@ -357,13 +365,13 @@ impl ConnectionPool {
     /// Get a connection from the pool
     pub async fn get_connection(&self) -> Result<PooledConnection> {
         let stream = self.inner.get_connection_with_timeout().await?;
-        Ok(PooledConnection::new(stream, self.inner.clone()))
+        Ok(PooledConnection::new(stream, Arc::clone(&self.inner)))
     }
 
     /// Get a fresh connection optimized for PUT requests
     pub async fn get_fresh_connection(&self) -> Result<PooledConnection> {
         let stream = self.inner.get_fresh_connection_with_timeout().await?;
-        Ok(PooledConnection::new(stream, self.inner.clone()))
+        Ok(PooledConnection::new(stream, Arc::clone(&self.inner)))
     }
 
     /// Preheat fresh connections for better PUT performance
@@ -411,8 +419,7 @@ impl ConnectionPool {
 
     /// Close all pooled connections
     pub fn close(&self) {
-        let mut connections = self.inner.connections.lock();
-        connections.clear();
+        self.inner.connections.lock().clear();
         debug!("Closed all pooled connections");
     }
 }

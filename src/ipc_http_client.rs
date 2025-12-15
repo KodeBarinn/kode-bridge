@@ -2,8 +2,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use interprocess::local_socket::tokio::prelude::LocalSocketStream;
-use interprocess::local_socket::traits::tokio::Stream;
-use interprocess::local_socket::{GenericFilePath, Name, ToFsName};
+use interprocess::local_socket::traits::tokio::Stream as _;
+use interprocess::local_socket::{GenericFilePath, Name, ToFsName as _};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -13,7 +13,7 @@ use crate::metrics::global_metrics;
 use crate::pool::{ConnectionPool, PoolConfig, PooledConnection};
 use crate::retry::{RetryConfig, RetryExecutor};
 use http::Method;
-use std::str::FromStr;
+use std::str::FromStr as _;
 use tracing::{debug, trace};
 
 /// Configuration for IPC HTTP client
@@ -82,12 +82,12 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    fn new(response: Response) -> Self {
+    const fn new(response: Response) -> Self {
         Self { inner: response }
     }
 
     /// Get the HTTP status code
-    pub fn status(&self) -> u16 {
+    pub const fn status(&self) -> u16 {
         self.inner.status_code()
     }
 
@@ -571,19 +571,19 @@ impl<'a> HttpRequestBuilder<'a> {
     }
 
     /// Set custom timeout
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub const fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
 
     /// 设置预期数据大小（用于PUT请求优化）
-    pub fn expected_size(mut self, size: usize) -> Self {
+    pub const fn expected_size(mut self, size: usize) -> Self {
         self.expected_size = Some(size);
         self
     }
 
     /// 启用PUT请求专门优化
-    pub fn optimize_for_put(mut self) -> Self {
+    pub const fn optimize_for_put(mut self) -> Self {
         self.put_optimized = true;
         self
     }

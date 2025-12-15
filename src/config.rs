@@ -203,22 +203,22 @@ impl GlobalConfig {
     }
 
     /// Convert client timeout to Duration
-    pub fn client_timeout(&self) -> Duration {
+    pub const fn client_timeout(&self) -> Duration {
         Duration::from_millis(self.client.default_timeout_ms)
     }
 
     /// Convert streaming timeout to Duration
-    pub fn streaming_timeout(&self) -> Duration {
+    pub const fn streaming_timeout(&self) -> Duration {
         Duration::from_millis(self.streaming.default_timeout_ms)
     }
 
     /// Convert retry delay to Duration
-    pub fn retry_delay(&self) -> Duration {
+    pub const fn retry_delay(&self) -> Duration {
         Duration::from_millis(self.client.retry_delay_ms)
     }
 
     /// Convert connection timeout to Duration
-    pub fn connection_timeout(&self) -> Duration {
+    pub const fn connection_timeout(&self) -> Duration {
         Duration::from_millis(self.client.connection_timeout_ms)
     }
 
@@ -282,25 +282,25 @@ impl ConfigBuilder {
     }
 
     /// Set client timeout
-    pub fn client_timeout(mut self, timeout: Duration) -> Self {
+    pub const fn client_timeout(mut self, timeout: Duration) -> Self {
         self.config.client.default_timeout_ms = timeout.as_millis() as u64;
         self
     }
 
     /// Enable or disable connection pooling
-    pub fn enable_pooling(mut self, enabled: bool) -> Self {
+    pub const fn enable_pooling(mut self, enabled: bool) -> Self {
         self.config.client.enable_pooling = enabled;
         self
     }
 
     /// Set pool configuration
-    pub fn pool_config(mut self, pool_config: PoolConfig) -> Self {
+    pub const fn pool_config(mut self, pool_config: PoolConfig) -> Self {
         self.config.client.pool = pool_config;
         self
     }
 
     /// Set max retries
-    pub fn max_retries(mut self, retries: usize) -> Self {
+    pub const fn max_retries(mut self, retries: usize) -> Self {
         self.config.client.max_retries = retries;
         self
     }

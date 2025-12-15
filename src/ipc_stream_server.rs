@@ -6,17 +6,17 @@
 use crate::errors::{KodeBridgeError, Result};
 use bytes::Bytes;
 #[cfg(unix)]
-use interprocess::os::unix::local_socket::ListenerOptionsExt;
+use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
 #[cfg(windows)]
-use interprocess::os::windows::local_socket::ListenerOptionsExt;
+use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
 #[cfg(windows)]
 use interprocess::os::windows::security_descriptor::SecurityDescriptor;
 use interprocess::{
     local_socket::{
-        tokio::prelude::LocalSocketStream, traits::tokio::Listener, GenericFilePath,
-        ListenerOptions, Name, ToFsName,
+        tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath,
+        ListenerOptions, Name, ToFsName as _,
     },
-    TryClone,
+    TryClone as _,
 };
 use parking_lot::RwLock;
 use serde_json::Value;
@@ -33,11 +33,11 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    io::AsyncWriteExt,
+    io::AsyncWriteExt as _,
     sync::{broadcast, Semaphore},
     time::timeout,
 };
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::{Stream, StreamExt as _};
 use tracing::{debug, error, info, warn};
 #[cfg(windows)]
 use widestring::U16CString;
@@ -311,7 +311,7 @@ where
     S: Stream<Item = StreamMessage> + Send + Unpin,
 {
     /// Create a new iterator source
-    pub fn new(stream: S) -> Self {
+    pub const fn new(stream: S) -> Self {
         Self { stream }
     }
 }
@@ -500,7 +500,7 @@ impl IpcStreamServer {
         self.shutdown_tx = Some(shutdown_tx);
 
         // Start data source task
-        let source_stats = self.stats.clone();
+        let source_stats = Arc::clone(&self.stats);
         let source_broadcast_tx = broadcast_tx.clone();
         let (source_shutdown_tx, source_shutdown_rx) = tokio::sync::oneshot::channel();
         let source_shutdown = source_shutdown_rx;
@@ -562,7 +562,7 @@ impl IpcStreamServer {
                     match accept_result {
                         Ok(stream) => {
                             // Acquire connection permit
-                            if let Ok(permit) = self.connection_semaphore.clone().try_acquire_owned() {
+                            if let Ok(permit) = Arc::clone(&self.connection_semaphore).try_acquire_owned() {
                                 let client_id = self.client_id_counter.fetch_add(1, Ordering::SeqCst);
 
                                 {
@@ -575,8 +575,8 @@ impl IpcStreamServer {
                                 self.clients.write().insert(client_id, client);
 
                                 let config = self.config.clone();
-                                let stats = self.stats.clone();
-                                let clients = self.clients.clone();
+                                let stats = Arc::clone(&self.stats);
+                                let clients = Arc::clone(&self.clients);
                                 let broadcast_rx = broadcast_tx.subscribe();
 
                                 tokio::spawn(async move {
@@ -585,8 +585,8 @@ impl IpcStreamServer {
                                         client_id,
                                         broadcast_rx,
                                         config,
-                                        stats.clone(),
-                                        clients.clone(),
+                                        Arc::clone(&stats),
+                                        Arc::clone(&clients),
                                     ).await {
                                         error!("Stream client {} error: {}", client_id, e);
                                         stats.write().total_errors += 1;
@@ -664,6 +664,7 @@ impl IpcStreamServer {
     }
 
     /// Handle a single streaming client connection
+    #[allow(clippy::cognitive_complexity)]
     async fn handle_stream_client(
         mut stream: LocalSocketStream,
         client_id: u64,
@@ -698,7 +699,7 @@ impl IpcStreamServer {
 
                                     match timeout(config.write_timeout, stream.write_all(&data)).await {
                                         Ok(Ok(())) => {
-                                            if let Ok(()) = stream.flush().await {
+                                            if stream.flush().await.is_ok() {
                                                 // Update client stats
                                                 if let Some(client) = clients.write().get_mut(&client_id) {
                                                     client.messages_sent += 1;

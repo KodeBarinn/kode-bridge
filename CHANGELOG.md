@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.3.5] - 2025-12-15
+
+### Fixed
+- Avoid large stack arrays in `ipc_http_server` by allocating HTTP header storage on the heap (fixes Clippy `large-stack-arrays`).
+- Replace `.clone()` on `Arc<T>` with `Arc::clone(&...)` across tests and examples to satisfy Clippy `clone_on_ref_ptr`.
+- Address explicit auto-deref and other small Clippy warnings in `ipc_http_server` and related modules.
+- Improve benches/examples error handling to address `unwrap_used`/`expect_used` lints; where appropriate, replace `unwrap()` with `expect()` and add targeted `#[allow(...)]` for benign bench/example code.
+- Minor example fixes (e.g., replace `vec!` with array in `examples/stream_server.rs`) and other cleanup.
+
+### Changed
+- Code hygiene and small refactors to satisfy clippy and improve robustness across tests, benches, and examples.
+
+### Internal
+- Updated examples and benches: `examples/stream_server.rs`, `examples/traffic_monitor.rs`, `examples/metrics_demo.rs`, `examples/concurrent_proxy_test.rs`, and `benches/bench_version.rs`.
+- Re-ran `cargo clippy` and iterated until the workspace was clean of the reported lints.
+
+
 ## [0.3.4] - 2025-10-11
 
 ### Changed

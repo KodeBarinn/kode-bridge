@@ -66,7 +66,7 @@ impl KodeBridgeError {
         }
     }
 
-    pub fn timeout(duration_ms: u64) -> Self {
+    pub const fn timeout(duration_ms: u64) -> Self {
         Self::Timeout { duration_ms }
     }
 
@@ -118,7 +118,7 @@ impl KodeBridgeError {
     }
 
     /// Check if error is retriable
-    pub fn is_retriable(&self) -> bool {
+    pub const fn is_retriable(&self) -> bool {
         matches!(
             self,
             Self::Io(_) | Self::Connection { .. } | Self::Timeout { .. } | Self::StreamClosed
@@ -126,12 +126,12 @@ impl KodeBridgeError {
     }
 
     /// Check if error is a client error
-    pub fn is_client_error(&self) -> bool {
+    pub const fn is_client_error(&self) -> bool {
         matches!(self, Self::ClientError { .. } | Self::InvalidRequest { .. })
     }
 
     /// Check if error is a server error
-    pub fn is_server_error(&self) -> bool {
+    pub const fn is_server_error(&self) -> bool {
         matches!(self, Self::ServerError { .. })
     }
 }
@@ -146,7 +146,7 @@ pub type AnyResult<T> = std::result::Result<T, AnyError>;
 /// Convert AnyError to KodeBridgeError
 impl From<AnyError> for KodeBridgeError {
     fn from(err: AnyError) -> Self {
-        KodeBridgeError::custom(err.to_string())
+        Self::custom(err.to_string())
     }
 }
 
@@ -164,12 +164,12 @@ impl std::error::Error for ErrorString {}
 
 impl From<String> for ErrorString {
     fn from(s: String) -> Self {
-        ErrorString(s)
+        Self(s)
     }
 }
 
 impl From<&str> for ErrorString {
     fn from(s: &str) -> Self {
-        ErrorString(s.to_string())
+        Self(s.to_string())
     }
 }

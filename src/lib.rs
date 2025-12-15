@@ -62,7 +62,7 @@ mod test_utils {
         config
     }
 
-    pub async fn _setup_test_server(
+    pub fn _setup_test_server(
         _socket_path: &str,
     ) -> (tokio::task::JoinHandle<()>, oneshot::Sender<()>) {
         // TODO: Fix server API integration
@@ -141,12 +141,7 @@ mod tests {
         let timeout_error = KodeBridgeError::timeout(5000);
         assert!(timeout_error.is_retriable());
 
-        match timeout_error {
-            KodeBridgeError::Timeout { duration_ms } => {
-                assert_eq!(duration_ms, 5000);
-            }
-            _ => panic!("Expected timeout error"),
-        }
+        assert!(matches!(timeout_error, KodeBridgeError::Timeout { duration_ms } if duration_ms == 5000));
     }
 
     #[test]

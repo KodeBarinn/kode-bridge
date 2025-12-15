@@ -2,8 +2,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use interprocess::local_socket::tokio::prelude::LocalSocketStream;
-use interprocess::local_socket::traits::tokio::Stream;
-use interprocess::local_socket::{GenericFilePath, Name, ToFsName};
+use interprocess::local_socket::traits::tokio::Stream as _;
+use interprocess::local_socket::{GenericFilePath, Name, ToFsName as _};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ use crate::errors::{KodeBridgeError, Result};
 use crate::http_client::RequestBuilder;
 use crate::stream_client::{send_streaming_request, StreamingResponse};
 use http::Method;
-use std::str::FromStr;
+use std::str::FromStr as _;
 use tracing::{debug, trace};
 
 /// Configuration for IPC streaming client
@@ -60,12 +60,12 @@ pub struct StreamResponse {
 }
 
 impl StreamResponse {
-    fn new(response: StreamingResponse) -> Self {
+    const fn new(response: StreamingResponse) -> Self {
         Self { inner: response }
     }
 
     /// Get the HTTP status code
-    pub fn status(&self) -> u16 {
+    pub const fn status(&self) -> u16 {
         self.inner.status_code()
     }
 
@@ -103,7 +103,7 @@ impl StreamResponse {
     /// Process stream in real-time with a handler
     pub async fn process_lines<F>(self, timeout: Duration, mut handler: F) -> Result<()>
     where
-        F: FnMut(&str) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>,
+        F: FnMut(&str) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> + Send,
     {
         self.inner
             .process_lines_with_timeout(timeout, |line| {
@@ -115,7 +115,7 @@ impl StreamResponse {
     /// Process stream with custom JSON processing
     pub async fn process_json<F, T>(self, timeout: Duration, handler: F) -> Result<Vec<T>>
     where
-        F: FnMut(&str) -> Option<T>,
+        F: FnMut(&str) -> Option<T> + Send,
         T: Send + 'static,
     {
         self.inner.process_json(timeout, handler).await
@@ -282,7 +282,7 @@ impl<'a> StreamRequestBuilder<'a> {
     }
 
     /// Set custom timeout
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub const fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
@@ -324,7 +324,7 @@ impl<'a> StreamRequestBuilder<'a> {
     /// Send and process lines with a handler (convenience method)
     pub async fn process_lines<F>(self, handler: F) -> Result<()>
     where
-        F: FnMut(&str) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>,
+        F: FnMut(&str) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> + Send,
     {
         let timeout = self.timeout;
         let response = self.send().await?;

@@ -37,7 +37,7 @@ pub struct TrafficMonitor(Arc<RwLock<CurrentTraffic>>);
 impl TrafficMonitor {
     pub fn new(client: IpcStreamClient) -> Self {
         let current = Arc::new(RwLock::new(CurrentTraffic::default()));
-        let monitor_current = current.clone();
+        let monitor_current = Arc::clone(&current);
 
         tokio::spawn(async move {
             let mut last: Option<TrafficData> = None;
@@ -58,7 +58,7 @@ impl TrafficMonitor {
                                 .unwrap_or((0, 0));
 
                             tokio::spawn({
-                                let current = monitor_current.clone();
+                                let current = Arc::clone(&monitor_current);
                                 async move {
                                     *current.write().await = CurrentTraffic {
                                         up_rate,
@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
     dotenv().ok();
 
     let client =
-        IpcStreamClient::new(env::var("CUSTOM_SOCK").unwrap_or("/tmp/example.sock".into()))?;
+        IpcStreamClient::new(env::var("CUSTOM_SOCK").unwrap_or_else(|_| "/tmp/example.sock".into()))?;
 
     // Test connection
     if client

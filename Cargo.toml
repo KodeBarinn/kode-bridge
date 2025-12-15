@@ -1,7 +1,7 @@
 [package]
 name = "kode-bridge"
 authors = ["Tunglies"]
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 description = "Modern HTTP Over IPC library for Rust with both client and server support (Unix sockets, Windows named pipes)."
 license = "Apache-2.0"

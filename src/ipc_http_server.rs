@@ -4,19 +4,20 @@
 //! with a focus on ease of use, performance, and flexibility.
 
 use crate::errors::{KodeBridgeError, Result};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut as _, Bytes, BytesMut};
 use http::{HeaderMap, Method, StatusCode, Uri};
 use interprocess::local_socket::{
-    tokio::prelude::LocalSocketStream, traits::tokio::Listener, GenericFilePath, ListenerOptions,
-    Name, ToFsName,
+    tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath,
+    ListenerOptions,
+    Name, ToFsName as _,
 };
 #[cfg(unix)]
-use interprocess::os::unix::local_socket::ListenerOptionsExt;
+use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
 #[cfg(windows)]
-use interprocess::os::windows::local_socket::ListenerOptionsExt;
+use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
 #[cfg(windows)]
 use interprocess::os::windows::security_descriptor::SecurityDescriptor;
-use interprocess::TryClone;
+use interprocess::TryClone as _;
 use parking_lot::RwLock;
 use path_tree::PathTree;
 use std::{
@@ -29,7 +30,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader},
     sync::Semaphore,
     time::timeout,
 };
@@ -159,7 +160,7 @@ impl ResponseBuilder {
     }
 
     /// Set response status code
-    pub fn status(mut self, status: StatusCode) -> Self {
+    pub const fn status(mut self, status: StatusCode) -> Self {
         self.status = status;
         self
     }
@@ -347,7 +348,7 @@ impl Router {
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.to_string()))
                     .collect();
-                return Some((handler.clone(), params));
+                return Some((Arc::clone(handler), params));
             }
         }
         None
@@ -515,16 +516,16 @@ impl IpcHttpServer {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok(stream) => {
-                            if let Ok(permit) = self.connection_semaphore.clone().try_acquire_owned() {
+                            if let Ok(permit) = Arc::clone(&self.connection_semaphore).try_acquire_owned() {
                                 {
                                     let mut stats = self.stats.write();
                                     stats.total_connections += 1;
                                     stats.active_connections += 1;
                                 }
 
-                                let router = self.router.clone();
+                                let router = Arc::clone(&self.router);
                                 let config = self.config;
-                                let stats = self.stats.clone();
+                                let stats = Arc::clone(&self.stats);
                                 let connection_id = {
                                     let stats = self.stats.read();
                                     stats.total_connections
@@ -536,7 +537,7 @@ impl IpcHttpServer {
                                         connection_id,
                                         router,
                                         config,
-                                        stats.clone(),
+                                        Arc::clone(&stats),
                                     ).await {
                                         error!("Connection {} error: {}", connection_id, e);
                                         let mut stats = stats.write();
@@ -768,7 +769,7 @@ impl IpcHttpServer {
             return Err(KodeBridgeError::validation("Request too large"));
         }
 
-        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut headers = vec![httparse::EMPTY_HEADER; 64].into_boxed_slice();
         let mut req = httparse::Request::new(&mut headers);
         let res = req.parse(&data).map_err(|e| {
             KodeBridgeError::validation(format!("Failed to parse HTTP request: {}", e))
@@ -894,11 +895,11 @@ mod tests {
     #[tokio::test]
     async fn test_router_can_be_cloned() {
         let counter = Arc::new(AtomicU32::new(0));
-        let counter_clone = counter.clone();
+        let counter_clone = Arc::clone(&counter);
 
         let router = Router::new()
             .get("/test", move |_ctx| {
-                let counter = counter_clone.clone();
+                let counter = Arc::clone(&counter_clone);
                 async move {
                     counter.fetch_add(1, Ordering::SeqCst);
                     Ok(HttpResponse::text("Hello"))
@@ -991,7 +992,9 @@ mod tests {
                 Ok(HttpResponse::text("DELETE user"))
             });
 
-        let cloned_router = router.clone();
+        let cloned_router = router.clone().get("/extra", |_ctx| async {
+            Ok(HttpResponse::text("extra"))
+        });
 
         assert_eq!(router.trees.len(), 4);
         assert_eq!(cloned_router.trees.len(), 4);
@@ -1009,16 +1012,23 @@ mod tests {
                 .find_handler_and_params(method, path)
                 .is_some());
         }
+
+        assert!(router
+            .find_handler_and_params(&Method::GET, "/extra")
+            .is_none());
+        assert!(cloned_router
+            .find_handler_and_params(&Method::GET, "/extra")
+            .is_some());
     }
 
     #[tokio::test]
     async fn test_cloned_router_handlers_work_independently() {
         let shared_state = Arc::new(AtomicU32::new(0));
-        let state1 = shared_state.clone();
-        let state2 = shared_state.clone();
+        let state1 = Arc::clone(&shared_state);
+        let state2 = Arc::clone(&shared_state);
 
         let router1 = Router::new().get("/increment", move |_ctx| {
-            let state = state1.clone();
+            let state = Arc::clone(&state1);
             async move {
                 let value = state.fetch_add(1, Ordering::SeqCst);
                 Ok(HttpResponse::text(format!("Router1: {}", value + 1)))
@@ -1026,7 +1036,7 @@ mod tests {
         });
 
         let router2 = router1.clone().get("/decrement", move |_ctx| {
-            let state = state2.clone();
+            let state = Arc::clone(&state2);
             async move {
                 let value = state.fetch_sub(1, Ordering::SeqCst);
                 Ok(HttpResponse::text(format!("Router2: {}", value - 1)))

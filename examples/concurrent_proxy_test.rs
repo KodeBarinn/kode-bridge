@@ -27,7 +27,7 @@ async fn concurrent_proxy_test(
 
     // 创建并发任务
     for (index, proxy_name) in proxies.iter().enumerate() {
-        let client = client.clone();
+        let client = Arc::clone(&client);
         let proxy_group = proxy_group.to_string();
         let proxy_name = proxy_name.to_string();
 
@@ -118,8 +118,8 @@ async fn concurrent_proxy_test(
     durations.sort();
 
     if !durations.is_empty() {
-        let min_duration = durations.first().unwrap();
-        let max_duration = durations.last().unwrap();
+        let min_duration = durations[0];
+        let max_duration = durations[durations.len() - 1];
         let median_duration = durations[durations.len() / 2];
 
         println!("   📊 Latency Analysis:");
@@ -264,7 +264,7 @@ async fn main() -> Result<()> {
 
                         // 执行并发测试
                         if let Err(e) =
-                            concurrent_proxy_test(client.clone(), group_name, proxy_names).await
+                            concurrent_proxy_test(Arc::clone(&client), group_name, proxy_names).await
                         {
                             println!("❌ Concurrent test failed: {}", e);
                         }

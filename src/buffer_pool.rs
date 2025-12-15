@@ -51,13 +51,18 @@ impl BufferPool {
 
     /// Pre-warm the pool with buffers
     pub fn warm_up(&self, count: usize) {
-        let mut buffers = self.buffers.lock();
-        let current_size = buffers.len();
-        let to_create = (count.saturating_sub(current_size)).min(self.max_pool_size - current_size);
+        let to_create = {
+            let mut buffers = self.buffers.lock();
+            let current_size = buffers.len();
+            let to_create =
+                (count.saturating_sub(current_size)).min(self.max_pool_size - current_size);
 
-        for _ in 0..to_create {
-            buffers.push_back(Vec::with_capacity(self.buffer_size));
-        }
+            for _ in 0..to_create {
+                buffers.push_back(Vec::with_capacity(self.buffer_size));
+            }
+
+            to_create
+        };
 
         debug!("Buffer pool warmed up with {} buffers", to_create);
     }
@@ -78,12 +83,12 @@ pub struct PooledBuffer {
 
 impl PooledBuffer {
     /// Get mutable reference to the underlying buffer
-    pub fn as_mut_vec(&mut self) -> &mut Vec<u8> {
+    pub const fn as_mut_vec(&mut self) -> &mut Vec<u8> {
         &mut self.buffer
     }
 
     /// Get reference to the underlying buffer
-    pub fn as_vec(&self) -> &Vec<u8> {
+    pub const fn as_vec(&self) -> &Vec<u8> {
         &self.buffer
     }
 
@@ -131,12 +136,20 @@ impl PooledBuffer {
 impl Drop for PooledBuffer {
     fn drop(&mut self) {
         if let Some(pool) = self.pool.upgrade() {
-            let mut buffers = pool.lock();
-            if buffers.len() < self.max_pool_size && self.buffer.capacity() >= 1024 {
-                // Only return buffer to pool if it's reasonably sized and pool has space
-                let mut returned_buffer = std::mem::take(&mut self.buffer);
-                returned_buffer.clear();
-                buffers.push_back(returned_buffer);
+            let returned = {
+                let mut buffers = pool.lock();
+                if buffers.len() < self.max_pool_size && self.buffer.capacity() >= 1024 {
+                    // Only return buffer to pool if it's reasonably sized and pool has space
+                    let mut returned_buffer = std::mem::take(&mut self.buffer);
+                    returned_buffer.clear();
+                    buffers.push_back(returned_buffer);
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if returned {
                 debug!("Buffer returned to pool");
             }
         }

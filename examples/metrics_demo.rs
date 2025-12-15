@@ -3,6 +3,7 @@ use kode_bridge::{
     MetricsSnapshot, ParserCacheStats,
 };
 use std::time::Duration;
+use std::sync::Arc;
 use tokio::time::sleep;
 
 #[tokio::main]
@@ -18,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Metrics system initialized");
 
     // Create health checker
-    let health_checker = HealthChecker::new(metrics.clone());
+    let health_checker = HealthChecker::new(Arc::clone(&metrics));
     println!("✅ Health checker created");
 
     // Create a test configuration
@@ -84,12 +85,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Demonstrate buffer pool integration
     println!("\n💾 Buffer Pool Statistics:");
     println!("==========================");
-    demonstrate_buffer_pools().await;
+    demonstrate_buffer_pools();
 
     // Demonstrate parser cache
     println!("\n🧠 Parser Cache Statistics:");
     println!("===========================");
-    demonstrate_parser_cache().await;
+    demonstrate_parser_cache();
 
     println!("\n✨ Demo completed successfully!");
     println!("📝 In a real application, you would:");
@@ -198,7 +199,7 @@ fn print_health_report(report: &kode_bridge::HealthReport) {
     }
 }
 
-async fn demonstrate_buffer_pools() {
+fn demonstrate_buffer_pools() {
     use kode_bridge::buffer_pool::global_pools;
 
     let pools = global_pools();
@@ -225,7 +226,7 @@ async fn demonstrate_buffer_pools() {
     println!("Buffer efficiency: 75% reuse rate");
 }
 
-async fn demonstrate_parser_cache() {
+fn demonstrate_parser_cache() {
     use kode_bridge::parser_cache::global_parser_cache;
 
     let cache = global_parser_cache();

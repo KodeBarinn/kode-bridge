@@ -3,8 +3,10 @@
 //! This example demonstrates how to create a streaming IPC server that
 //! broadcasts real-time data to multiple connected clients.
 
+#![allow(clippy::expect_used, clippy::useless_vec)]
+
 use kode_bridge::{IpcStreamServer, JsonDataSource, Result, StreamMessage, StreamServerConfig};
-use rand::Rng;
+use rand::Rng as _;
 use serde_json::json;
 use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -40,7 +42,7 @@ struct EventLog {
 fn generate_traffic_data() -> Result<serde_json::Value> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("SystemTime before UNIX_EPOCH")
         .as_secs();
 
     let mut rng = rand::rng();
@@ -57,7 +59,7 @@ fn generate_traffic_data() -> Result<serde_json::Value> {
 fn generate_system_metrics() -> Result<serde_json::Value> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("SystemTime before UNIX_EPOCH")
         .as_secs();
 
     let mut rng = rand::rng();
@@ -76,10 +78,10 @@ fn generate_system_metrics() -> Result<serde_json::Value> {
 fn generate_event_log() -> Result<serde_json::Value> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("SystemTime before UNIX_EPOCH")
         .as_secs();
 
-    let events = vec![
+    let events = [
         ("INFO", "User logged in successfully", "auth"),
         ("WARN", "High memory usage detected", "system"),
         ("ERROR", "Failed to connect to database", "database"),
@@ -270,17 +272,16 @@ async fn main() -> Result<()> {
 
 // Example of manual broadcasting (for demonstration)
 #[allow(dead_code)]
-async fn manual_broadcast_example() -> Result<()> {
+fn manual_broadcast_example() {
     // This shows how you might manually broadcast messages
     let _data = json!({
         "type": "notification",
         "message": "Manual broadcast message",
-        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime before UNIX_EPOCH").as_secs()
     });
 
     // server.broadcast(StreamMessage::Json(data))?;
     info!("Manual broadcast sent");
-    Ok(())
 }
 
 // Example of different message types

@@ -25,8 +25,14 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use kode_bridge::http_client::Response;
 use kode_bridge::IpcHttpClient;
 
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 async fn bench_version_once(client: &IpcHttpClient) -> Response {
-    client.get("/version").send().await.unwrap().into_inner()
+    client
+        .get("/version")
+        .send()
+        .await
+        .expect("Request failed")
+        .into_inner()
 }
 
 fn get_ipc_path() -> String {
@@ -48,8 +54,9 @@ fn get_ipc_path() -> String {
     }
 }
 
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 fn bench_version(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().expect("Failed to create runtime");
     let ipc_path = get_ipc_path();
 
     let mut group = c.benchmark_group("ipc_http_version");
@@ -60,7 +67,7 @@ fn bench_version(c: &mut Criterion) {
 
     // Create client once for Unix, or per-iteration for Windows
     #[cfg(unix)]
-    let client = IpcHttpClient::new(&ipc_path).unwrap();
+    let client = IpcHttpClient::new(&ipc_path).expect("Failed to create IpcHttpClient");
 
     group.bench_function("version_once", |b| {
         b.iter(|| {
@@ -68,7 +75,7 @@ fn bench_version(c: &mut Criterion) {
                 // Create client for each iteration on Windows to avoid connection issues
                 #[cfg(windows)]
                 {
-                    let client = IpcHttpClient::new(&ipc_path).unwrap();
+                    let client = IpcHttpClient::new(&ipc_path).expect("Failed to create IpcHttpClient");
                     let _ = bench_version_once(&client).await;
                 }
 
@@ -81,7 +88,7 @@ fn bench_version(c: &mut Criterion) {
                 // Default behavior for other platforms
                 #[cfg(not(any(unix, windows)))]
                 {
-                    let client = IpcHttpClient::new(&ipc_path).unwrap();
+                    let client = IpcHttpClient::new(&ipc_path).expect("Failed to create IpcHttpClient");
                     let _ = bench_version_once(&client).await;
                 }
             });

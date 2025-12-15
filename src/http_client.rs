@@ -6,9 +6,9 @@ use http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Versi
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::str::FromStr;
+use std::str::FromStr as _;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, trace};
 
@@ -22,7 +22,7 @@ pub struct Response {
 }
 
 impl Response {
-    pub fn new(status: StatusCode, version: Version, headers: HeaderMap, body: Bytes) -> Self {
+    pub const fn new(status: StatusCode, version: Version, headers: HeaderMap, body: Bytes) -> Self {
         Self {
             status,
             version,
@@ -32,27 +32,27 @@ impl Response {
     }
 
     /// Get HTTP status code
-    pub fn status(&self) -> StatusCode {
+    pub const fn status(&self) -> StatusCode {
         self.status
     }
 
     /// Get status code as u16
-    pub fn status_code(&self) -> u16 {
+    pub const fn status_code(&self) -> u16 {
         self.status.as_u16()
     }
 
     /// Get HTTP version
-    pub fn version(&self) -> Version {
+    pub const fn version(&self) -> Version {
         self.version
     }
 
     /// Get response headers
-    pub fn headers(&self) -> &HeaderMap {
+    pub const fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
     /// Get response body as bytes
-    pub fn body(&self) -> &Bytes {
+    pub const fn body(&self) -> &Bytes {
         &self.body
     }
 
@@ -233,7 +233,7 @@ impl RequestBuilder {
 /// Parse HTTP response from a stream with optimized parsing
 pub async fn parse_response<S>(stream: S) -> Result<Response>
 where
-    S: AsyncRead + Unpin,
+    S: AsyncRead + Unpin + Send,
 {
     let mut reader = BufReader::new(stream);
 
@@ -329,7 +329,7 @@ where
 
 async fn read_chunked_body<R>(reader: &mut BufReader<R>) -> Result<Bytes>
 where
-    R: AsyncRead + Unpin,
+    R: AsyncRead + Unpin + Send,
 {
     let mut body_buffer = global_pools().get_large(); // 开始就使用大缓冲区
 
@@ -382,7 +382,7 @@ where
 
 async fn read_fixed_body<R>(reader: &mut BufReader<R>, len: usize) -> Result<Bytes>
 where
-    R: AsyncRead + Unpin,
+    R: AsyncRead + Unpin + Send,
 {
     let mut body = vec![0u8; len];
     reader.read_exact(&mut body).await?;
@@ -391,14 +391,13 @@ where
 
 async fn read_until_end_adaptive<R>(reader: &mut BufReader<R>) -> Result<Bytes>
 where
-    R: AsyncRead + Unpin,
+    R: AsyncRead + Unpin + Send,
 {
-    let mut body_buffer = global_pools().get_medium(); // 从中等缓冲区开始
-    let mut read_buffer = [0u8; 8192]; // 增加读缓冲区大小
+    let mut body_buffer = global_pools().get_medium();
+    let mut read_buffer = [0u8; 512];
     let mut consecutive_empty_reads = 0;
 
     loop {
-        // 使用更短的超时时间，更快地检测结束
         let timeout_duration = Duration::from_millis(50 + (consecutive_empty_reads * 25));
 
         match tokio::time::timeout(timeout_duration, reader.read(&mut read_buffer)).await {
@@ -450,7 +449,7 @@ where
 /// Send HTTP request and parse response
 pub async fn send_request<S>(mut stream: S, request: Bytes) -> Result<Response>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     // Send request
     stream.write_all(&request).await?;

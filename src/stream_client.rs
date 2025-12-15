@@ -1,16 +1,16 @@
 use crate::errors::{KodeBridgeError, Result};
 use bytes::Bytes;
-use futures::stream::StreamExt;
+use futures::stream::StreamExt as _;
 use http::{header, HeaderMap, StatusCode};
 use pin_project_lite::pin_project;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::str::FromStr;
+use std::str::FromStr as _;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio_stream::Stream;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::{debug, trace, warn};
@@ -39,17 +39,17 @@ impl StreamingResponse {
     }
 
     /// Get HTTP status code
-    pub fn status(&self) -> StatusCode {
+    pub const fn status(&self) -> StatusCode {
         self.status
     }
 
     /// Get status code as u16
-    pub fn status_code(&self) -> u16 {
+    pub const fn status_code(&self) -> u16 {
         self.status.as_u16()
     }
 
     /// Get response headers
-    pub fn headers(&self) -> &HeaderMap {
+    pub const fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
@@ -127,7 +127,7 @@ impl StreamingResponse {
     /// Process stream with custom JSON handler
     pub async fn process_json<F, T>(mut self, timeout: Duration, mut handler: F) -> Result<Vec<T>>
     where
-        F: FnMut(&str) -> Option<T>,
+        F: FnMut(&str) -> Option<T> + Send,
         T: Send + 'static,
     {
         let mut results = Vec::new();
@@ -160,7 +160,7 @@ impl StreamingResponse {
     /// Process stream data in real-time with error handling
     pub async fn process_lines<F>(mut self, mut handler: F) -> Result<()>
     where
-        F: FnMut(&str) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>,
+        F: FnMut(&str) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> + Send,
     {
         while let Some(line_result) = self.stream.next().await {
             match line_result {
@@ -186,7 +186,7 @@ impl StreamingResponse {
         mut handler: F,
     ) -> Result<()>
     where
-        F: FnMut(&str) -> std::result::Result<bool, Box<dyn std::error::Error + Send + Sync>>, // Return false to stop
+        F: FnMut(&str) -> std::result::Result<bool, Box<dyn std::error::Error + Send + Sync>> + Send, // Return false to stop
     {
         // 使用更短的超时避免长时间的waker等待
         let optimized_timeout = std::cmp::min(timeout, Duration::from_secs(5));
@@ -276,7 +276,7 @@ impl StreamingResponse {
     }
 
     /// Convert to legacy format for compatibility
-    pub fn status_u16(&self) -> u16 {
+    pub const fn status_u16(&self) -> u16 {
         self.status.as_u16()
     }
 
@@ -338,8 +338,8 @@ where
         .ok_or_else(|| KodeBridgeError::protocol("Could not find end of HTTP headers"))?;
 
     // Parse the headers using httparse
-    let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut response = httparse::Response::new(&mut headers);
+    let mut headers = vec![httparse::EMPTY_HEADER; 64];
+    let mut response = httparse::Response::new(headers.as_mut_slice());
 
     let status = match response.parse(&buffer[..headers_end])? {
         httparse::Status::Complete(_) => response

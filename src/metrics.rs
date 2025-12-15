@@ -238,12 +238,12 @@ impl ThroughputTracker {
         }
 
         let total_requests: u64 = self.windows.iter().map(|(_, count)| *count).sum();
-        let time_span = self
-            .windows
-            .last()
-            .unwrap()
-            .0
-            .duration_since(self.windows[0].0);
+        let last_timestamp = match self.windows.last() {
+            Some((timestamp, _)) => *timestamp,
+            None => return 0.0,
+        };
+
+        let time_span = last_timestamp.duration_since(self.windows[0].0);
 
         if time_span.as_secs_f64() > 0.0 {
             total_requests as f64 / time_span.as_secs_f64()
@@ -453,7 +453,7 @@ pub struct RequestTracker<'a> {
     start_time: Instant,
 }
 
-impl<'a> RequestTracker<'a> {
+impl RequestTracker<'_> {
     /// Mark request as completed successfully
     pub fn success(self, status_code: u16) {
         self.complete(true, Some(status_code));
@@ -585,7 +585,7 @@ impl HealthChecker {
         }
     }
 
-    pub fn with_thresholds(mut self, thresholds: HealthThresholds) -> Self {
+    pub const fn with_thresholds(mut self, thresholds: HealthThresholds) -> Self {
         self.thresholds = thresholds;
         self
     }
@@ -664,7 +664,7 @@ pub fn global_metrics() -> &'static Arc<MetricsCollector> {
 
 /// Initialize metrics system
 pub fn init_metrics() -> Arc<MetricsCollector> {
-    global_metrics().clone()
+    Arc::clone(global_metrics())
 }
 
 #[cfg(test)]
@@ -717,7 +717,7 @@ mod tests {
     #[test]
     fn test_health_checker() {
         let metrics = Arc::new(MetricsCollector::new());
-        let checker = HealthChecker::new(metrics.clone());
+        let checker = HealthChecker::new(metrics);
 
         let report = checker.check_health();
         assert_eq!(report.status, HealthStatus::Healthy);

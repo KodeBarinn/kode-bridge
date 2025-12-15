@@ -31,8 +31,8 @@ impl ReusableParser {
         buffer: &[u8],
     ) -> Result<(u16, Vec<(String, String)>), httparse::Error> {
         // Use a local header buffer - still more efficient than recreating parser objects
-        let mut headers = [httparse::EMPTY_HEADER; 128];
-        let mut response = httparse::Response::new(&mut headers);
+        let mut headers = vec![httparse::EMPTY_HEADER; 128];
+        let mut response = httparse::Response::new(headers.as_mut_slice());
 
         match response.parse(buffer)? {
             httparse::Status::Complete(_) => {
@@ -59,8 +59,8 @@ impl ReusableParser {
     /// Parse HTTP request
     pub fn parse_request(&mut self, buffer: &[u8]) -> HttpParseResult {
         // Use a local header buffer
-        let mut headers = [httparse::EMPTY_HEADER; 128];
-        let mut request = httparse::Request::new(&mut headers);
+        let mut headers = vec![httparse::EMPTY_HEADER; 128];
+        let mut request = httparse::Request::new(headers.as_mut_slice());
 
         match request.parse(buffer)? {
             httparse::Status::Complete(_) => {
@@ -83,7 +83,7 @@ impl ReusableParser {
     }
 
     /// Reset parser state for reuse (no-op in simplified version)
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         // No state to reset in simplified version
     }
 }
@@ -123,14 +123,18 @@ impl HttpParserCache {
 
     /// Pre-warm the cache
     pub fn warm_up(&self, count: usize) {
-        let mut parsers = self.parsers.lock();
-        let current_size = parsers.len();
-        let to_create =
-            (count.saturating_sub(current_size)).min(self.max_cache_size - current_size);
+        let to_create = {
+            let mut parsers = self.parsers.lock();
+            let current_size = parsers.len();
+            let to_create =
+                (count.saturating_sub(current_size)).min(self.max_cache_size - current_size);
 
-        for _ in 0..to_create {
-            parsers.push_back(ReusableParser::new());
-        }
+            for _ in 0..to_create {
+                parsers.push_back(ReusableParser::new());
+            }
+
+            to_create
+        };
 
         debug!("Parser cache warmed up with {} parsers", to_create);
     }
@@ -155,27 +159,31 @@ impl CachedParser {
         &mut self,
         buffer: &[u8],
     ) -> Result<(u16, Vec<(String, String)>), httparse::Error> {
-        self.parser
-            .as_mut()
-            .expect("Parser not available")
-            .parse_response(buffer)
+        let parser = self.parser.as_mut().ok_or(httparse::Error::Status)?;
+        parser.parse_response(buffer)
     }
 
     /// Parse HTTP request  
     pub fn parse_request(&mut self, buffer: &[u8]) -> HttpParseResult {
-        self.parser
-            .as_mut()
-            .expect("Parser not available")
-            .parse_request(buffer)
+        let parser = self.parser.as_mut().ok_or(httparse::Error::Status)?;
+        parser.parse_request(buffer)
     }
 }
 
 impl Drop for CachedParser {
     fn drop(&mut self) {
         if let (Some(parser), Some(cache)) = (self.parser.take(), self.cache.upgrade()) {
-            let mut parsers = cache.lock();
-            if parsers.len() < self.max_cache_size {
-                parsers.push_back(parser);
+            let returned = {
+                let mut parsers = cache.lock();
+                if parsers.len() < self.max_cache_size {
+                    parsers.push_back(parser);
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if returned {
                 debug!("Parser returned to cache");
             }
         }
@@ -200,18 +208,16 @@ impl CacheKey {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
 
         // Hash relevant headers (ignore cache-control, etc.)
-        let relevant_headers: Vec<_> = headers
-            .iter()
-            .filter(|(name, _)| {
-                let name_lower = name.to_lowercase();
-                !name_lower.starts_with("cache-")
-                    && name_lower != "date"
-                    && name_lower != "last-modified"
-                    && name_lower != "etag"
-            })
-            .collect();
-
-        relevant_headers.hash(&mut hasher);
+        for (name, value) in headers.iter().filter(|(name, _)| {
+            let name_lower = name.to_lowercase();
+            !name_lower.starts_with("cache-")
+                && name_lower != "date"
+                && name_lower != "last-modified"
+                && name_lower != "etag"
+        }) {
+            name.hash(&mut hasher);
+            value.hash(&mut hasher);
+        }
 
         Self {
             method: method.to_string(),
@@ -272,6 +278,7 @@ impl ResponseCache {
             if let Some(expires_at) = entry.expires_at {
                 if Instant::now() > expires_at {
                     cache.remove(key);
+                    drop(cache);
                     return None;
                 }
             }
@@ -400,7 +407,7 @@ mod tests {
             expires_at: Some(Instant::now() + Duration::from_secs(1)),
         };
 
-        cache.put(key.clone(), response.clone());
+        cache.put(key.clone(), response);
 
         let cached = cache.get(&key).unwrap();
         assert_eq!(cached.status_code, 200);
