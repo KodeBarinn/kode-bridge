@@ -178,7 +178,7 @@ impl RequestBuilder {
         );
 
         // 零拷贝转换到Bytes
-        self.body = Some(Bytes::copy_from_slice(&buffer));
+        self.body = Some(buffer.into_bytes());
         Ok(self)
     }
 
@@ -218,7 +218,7 @@ impl RequestBuilder {
             request.extend_from_slice(&body);
         }
 
-        Ok(Bytes::copy_from_slice(&request))
+        Ok(request.into_bytes())
     }
 }
 
@@ -365,7 +365,7 @@ where
         }
     }
 
-    Ok(Bytes::copy_from_slice(body_buffer.as_slice()))
+    Ok(body_buffer.into_bytes())
 }
 
 async fn read_fixed_body<R>(reader: &mut BufReader<R>, len: usize) -> Result<Bytes>
@@ -429,7 +429,7 @@ where
     }
 
     // Convert pooled buffer to Bytes for return
-    Ok(Bytes::copy_from_slice(body_buffer.as_slice()))
+    Ok(body_buffer.into_bytes())
 }
 
 /// Send HTTP request and parse response

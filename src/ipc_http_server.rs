@@ -590,7 +590,7 @@ impl IpcHttpServer {
             connected_at: Instant::now(),
         };
 
-        let mut stream = BufReader::with_capacity(config.max_header_size + config.max_request_size, stream);
+        let mut stream = BufReader::with_capacity(config.max_header_size, stream);
 
         loop {
             let request_data = match timeout(config.read_timeout, Self::read_request(&mut stream, &config)).await {
@@ -776,8 +776,9 @@ impl IpcHttpServer {
         }
 
         let body_start = res.unwrap();
-        let body = if data.len() > body_start {
-            Bytes::copy_from_slice(&data[body_start..])
+        let bytes = data.freeze();
+        let body = if bytes.len() > body_start {
+            bytes.slice(body_start..)
         } else {
             Bytes::new()
         };

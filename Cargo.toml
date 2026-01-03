@@ -1,14 +1,19 @@
 [package]
 name = "kode-bridge"
 authors = ["Tunglies"]
-version = "0.3.5"
+version = "0.3.6-dev"
 edition = "2021"
 description = "Modern HTTP Over IPC library for Rust with both client and server support (Unix sockets, Windows named pipes)."
 license = "Apache-2.0"
 repository = "https://github.com/KodeBarinn/kode-bridge"
 readme = "README.md"
 keywords = ["http", "ipc", "bridge", "async", "performance"]
-categories = ["network-programming", "web-programming", "api-bindings", "asynchronous"]
+categories = [
+    "network-programming",
+    "web-programming",
+    "api-bindings",
+    "asynchronous",
+]
 rust-version = "1.83"
 
 [features]
@@ -19,7 +24,15 @@ full = ["client", "server"]
 
 [dependencies]
 interprocess = { version = "2.2.3", features = ["tokio"] }
-tokio = { version = "1.49.0", features = ["rt", "rt-multi-thread", "io-util", "sync", "time", "macros", "signal"] }
+tokio = { version = "1.49.0", features = [
+    "rt",
+    "rt-multi-thread",
+    "io-util",
+    "sync",
+    "time",
+    "macros",
+    "signal",
+] }
 tokio-stream = { version = "0.1.17", features = ["io-util"] }
 tokio-util = { version = "0.7.17", features = ["codec", "io"] }
 futures = "0.3.31"
@@ -32,9 +45,9 @@ bytes = "1.11.0"
 tracing = "0.1.44"
 parking_lot = "0.12.5"
 pin-project-lite = "0.2.16"
-toml = "0.9.10"
+toml = "0.9.8"
 rand = "0.9.2"
-path-tree = {version = "0.8.3", optional = true}
+path-tree = { version = "0.8.3", optional = true }
 url = "2.5.7"
 
 [target.'cfg(unix)'.dependencies]
@@ -48,7 +61,10 @@ dotenvy = "0.15.7"
 criterion = { version = "=0.8.1", features = ["async"] }
 async-trait = "0.1.89"
 tracing-subscriber = "0.3.22"
-chrono = { version = "0.4.42", default-features = false, features = ["std", "clock"] }
+chrono = { version = "0.4.42", default-features = false, features = [
+    "std",
+    "clock",
+] }
 
 [[example]]
 name = "request"
@@ -69,7 +85,7 @@ path = "examples/http_server.rs"
 required-features = ["server"]
 
 [[example]]
-name = "stream_server"  
+name = "stream_server"
 path = "examples/stream_server.rs"
 required-features = ["server"]
 

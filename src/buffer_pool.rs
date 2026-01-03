@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -130,6 +131,12 @@ impl PooledBuffer {
     pub fn reserve(&mut self, additional: usize) {
         self.buffer.reserve(additional);
     }
+
+    /// Convert the pooled buffer into Bytes without an extra copy.
+    /// The underlying buffer is moved out, so this instance will not return it to the pool on drop.
+    pub fn into_bytes(mut self) -> Bytes {
+        Bytes::from(std::mem::take(&mut self.buffer))
+    }
 }
 
 impl Drop for PooledBuffer {
@@ -226,10 +233,10 @@ impl GlobalBufferPools {
 
     /// Warm up all pools
     pub fn warm_up(&self) {
-        self.small.warm_up(16); // More pre-warmed buffers
-        self.medium.warm_up(32);
-        self.large.warm_up(8);
-        self.extra_large.warm_up(4);
+        self.small.warm_up(8); // More pre-warmed buffers
+        self.medium.warm_up(16);
+        self.large.warm_up(4);
+        self.extra_large.warm_up(2);
     }
 
     /// Get pool statistics

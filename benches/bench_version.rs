@@ -66,29 +66,12 @@ fn bench_version(c: &mut Criterion) {
     group.sample_size(10);
 
     // Create client once for Unix, or per-iteration for Windows
-    #[cfg(unix)]
     let client = IpcHttpClient::new(&ipc_path).expect("Failed to create IpcHttpClient");
 
     group.bench_function("version_once", |b| {
         b.iter(|| {
             rt.block_on(async {
-                // Create client for each iteration on Windows to avoid connection issues
-                #[cfg(windows)]
-                {
-                    let client = IpcHttpClient::new(&ipc_path).expect("Failed to create IpcHttpClient");
-                    let _ = bench_version_once(&client).await;
-                }
-
-                // Reuse client on Unix for better performance
-                #[cfg(unix)]
-                {
-                    let _ = bench_version_once(&client).await;
-                }
-
-                // Default behavior for other platforms
-                #[cfg(not(any(unix, windows)))]
-                {
-                    let client = IpcHttpClient::new(&ipc_path).expect("Failed to create IpcHttpClient");
+                for _ in 0..1_000 {
                     let _ = bench_version_once(&client).await;
                 }
             });
