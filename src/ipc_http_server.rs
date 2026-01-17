@@ -323,26 +323,24 @@ impl Router {
         method: &Method,
         path: &str,
     ) -> Option<(Arc<HandlerFn>, HashMap<String, String>)> {
-        let decoded = match Url::parse(&format!("http://localhost{}", path)) {
-            Ok(url) => url.path().to_string(),
-            Err(_) => return None,
+        let Ok(decoded) = Url::parse(&format!("http://localhost{}", path)) else {
+            return None;
         };
+        let decoded_path = decoded.path();
 
-        if !self.is_safe_path(&decoded) {
+        if !self.is_safe_path(decoded_path) {
             return None;
         }
 
-        if let Some(tree) = self.trees.get(method) {
-            if let Some((handler, p)) = tree.find(&decoded) {
-                let params: HashMap<String, String> = p
-                    .params()
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                    .collect();
-                return Some((Arc::clone(handler), params));
-            }
-        }
-        None
+        let tree = self.trees.get(method)?;
+        let (handler, p) = tree.find(decoded_path)?;
+        let params: HashMap<String, String> = p
+            .params()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        Some((Arc::clone(handler), params))
     }
 
     /// Check if a path is safe
@@ -499,6 +497,7 @@ impl IpcHttpServer {
             .map_err(|e| KodeBridgeError::connection(format!("Failed to bind server: {}", e)))?;
         info!("🚀 HTTP IPC Server listening on {:?}", self.name);
 
+        // TODO: Graceful shutdown handling with custom signal
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
 
@@ -507,42 +506,46 @@ impl IpcHttpServer {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok(stream) => {
-                            if let Ok(permit) = Arc::clone(&self.connection_semaphore).try_acquire_owned() {
-                                {
-                                    let mut stats = self.stats.write();
-                                    stats.total_connections += 1;
-                                    stats.active_connections += 1;
+                            let permit = match Arc::clone(&self.connection_semaphore).try_acquire_owned() {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    warn!("Maximum connections reached, rejecting new connection");
+                                    continue;
                                 }
+                            };
 
-                                let router = Arc::clone(&self.router);
-                                let config = self.config;
-                                let stats = Arc::clone(&self.stats);
-                                let connection_id = {
-                                    let stats = self.stats.read();
-                                    stats.total_connections
-                                };
-
-                                tokio::spawn(async move {
-                                    if let Err(e) = Self::handle_connection(
-                                        stream,
-                                        connection_id,
-                                        router,
-                                        config,
-                                        Arc::clone(&stats),
-                                    ).await {
-                                        error!("Connection {} error: {}", connection_id, e);
-                                        let mut stats = stats.write();
-                                        stats.total_errors += 1;
-                                    }
-                                    {
-                                        let mut stats = stats.write();
-                                        stats.active_connections = stats.active_connections.saturating_sub(1);
-                                    }
-                                    drop(permit);
-                                });
-                            } else {
-                                warn!("Maximum connections reached, rejecting new connection");
+                            {
+                                let mut stats = self.stats.write();
+                                stats.total_connections += 1;
+                                stats.active_connections += 1;
                             }
+
+                            let router = Arc::clone(&self.router);
+                            let config = self.config;
+                            let stats = Arc::clone(&self.stats);
+                            let connection_id = {
+                                let stats = self.stats.read();
+                                stats.total_connections
+                            };
+
+                            tokio::spawn(async move {
+                                if let Err(e) = Self::handle_connection(
+                                    stream,
+                                    connection_id,
+                                    router,
+                                    config,
+                                    Arc::clone(&stats),
+                                ).await {
+                                    error!("Connection {} error: {}", connection_id, e);
+                                    let mut stats = stats.write();
+                                    stats.total_errors += 1;
+                                }
+                                {
+                                    let mut stats = stats.write();
+                                    stats.active_connections = stats.active_connections.saturating_sub(1);
+                                }
+                                drop(permit);
+                            });
                         }
                         Err(e) => {
                             error!("Failed to accept connection: {}", e);
