@@ -1,6 +1,6 @@
 use crate::errors::{KodeBridgeError, Result};
 use crate::parser_cache::global_parser_cache;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut as _, Bytes, BytesMut};
 use http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -163,7 +163,7 @@ impl RequestBuilder {
         let mut buffer = BytesMut::with_capacity(1024);
         {
             let writer = (&mut buffer).writer();
-            serde_json::to_writer(writer, body).map_err(|e| KodeBridgeError::from(e))?;
+            serde_json::to_writer(writer, body).map_err(KodeBridgeError::from)?;
         }
 
         self.headers
