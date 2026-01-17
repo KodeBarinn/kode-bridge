@@ -1,7 +1,6 @@
-use crate::buffer_pool::global_pools;
 use crate::errors::{KodeBridgeError, Result};
 use crate::parser_cache::global_parser_cache;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -161,38 +160,28 @@ impl RequestBuilder {
     where
         T: Serialize,
     {
-        // 使用全局缓冲池来减少内存分配
-        let mut buffer = global_pools().get_medium();
-
-        // 直接序列化到缓冲区，避免中间Vec分配
-        serde_json::to_writer(buffer.as_mut_vec(), body)?;
+        let mut buffer = BytesMut::with_capacity(1024);
+        {
+            let writer = (&mut buffer).writer();
+            serde_json::to_writer(writer, body).map_err(|e| KodeBridgeError::from(e))?;
+        }
 
         self.headers
             .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        // 避免字符串分配，直接使用itoa
         let content_length = buffer.len().to_string();
         self.headers.insert(
             header::CONTENT_LENGTH,
             HeaderValue::from_str(&content_length).map_err(|e| KodeBridgeError::Http(e.into()))?,
         );
 
-        // 零拷贝转换到Bytes
-        self.body = Some(buffer.into_bytes());
+        self.body = Some(buffer.freeze());
         Ok(self)
     }
 
     /// Build the HTTP request as bytes with optimized allocation
     pub fn build(self) -> Result<Bytes> {
-        // 预估请求大小以选择合适的缓冲区
-        let estimated_size = 200 + // 基础头部大小
-            self.body.as_ref().map(|b| b.len()).unwrap_or(0);
-
-        let mut request = if estimated_size > 8192 {
-            global_pools().get_large()
-        } else {
-            global_pools().get_medium()
-        };
+        let mut request = BytesMut::with_capacity(1024 + self.body.as_ref().map(|b| b.len()).unwrap_or(0));
 
         // Request line - 使用更高效的写入方式
         request.extend_from_slice(self.method.as_str().as_bytes());
@@ -201,7 +190,7 @@ impl RequestBuilder {
         request.extend_from_slice(b" HTTP/1.1\r\n");
 
         // Headers - 批量写入减少系统调用
-        let mut headers_buffer = Vec::with_capacity(512);
+        let mut headers_buffer = BytesMut::with_capacity(512);
         for (key, value) in &self.headers {
             headers_buffer.extend_from_slice(key.as_str().as_bytes());
             headers_buffer.extend_from_slice(b": ");
@@ -218,7 +207,7 @@ impl RequestBuilder {
             request.extend_from_slice(&body);
         }
 
-        Ok(request.into_bytes())
+        Ok(request.freeze())
     }
 }
 
@@ -230,7 +219,7 @@ where
     let mut reader = BufReader::new(stream);
 
     // 使用预分配的缓冲区避免多次分配
-    let mut headers_buffer = global_pools().get_medium();
+    let mut headers_buffer = BytesMut::with_capacity(1024);
 
     // 先读取状态行
     let mut status_line = String::new();
@@ -319,7 +308,7 @@ async fn read_chunked_body<R>(reader: &mut BufReader<R>) -> Result<Bytes>
 where
     R: AsyncRead + Unpin + Send,
 {
-    let mut body_buffer = global_pools().get_large(); // 开始就使用大缓冲区
+    let mut body_buffer = BytesMut::with_capacity(8192);
 
     loop {
         // Read chunk size line
@@ -342,14 +331,6 @@ where
             break;
         }
 
-        // 对大块数据使用更大的缓冲区
-        if chunk_size > 65536 && body_buffer.capacity() < 131072 {
-            // 如果遇到大块，升级到更大的缓冲区
-            let mut larger_buffer = global_pools().get_extra_large();
-            larger_buffer.extend_from_slice(&body_buffer);
-            body_buffer = larger_buffer;
-        }
-
         // Read chunk data
         let mut chunk = vec![0u8; chunk_size];
         reader.read_exact(&mut chunk).await?;
@@ -358,14 +339,9 @@ where
         // Read trailing CRLF
         let mut crlf = [0u8; 2];
         reader.read_exact(&mut crlf).await?;
-
-        // 安全限制 - 针对PUT请求增加到20MB
-        if body_buffer.len() > 20 * 1024 * 1024 {
-            return Err(KodeBridgeError::protocol("Chunked response body too large"));
-        }
     }
 
-    Ok(body_buffer.into_bytes())
+    Ok(body_buffer.freeze())
 }
 
 async fn read_fixed_body<R>(reader: &mut BufReader<R>, len: usize) -> Result<Bytes>
@@ -381,12 +357,12 @@ async fn read_until_end_adaptive<R>(reader: &mut BufReader<R>) -> Result<Bytes>
 where
     R: AsyncRead + Unpin + Send,
 {
-    let mut body_buffer = global_pools().get_medium();
+    let mut body_buffer = BytesMut::with_capacity(8192);
     let mut read_buffer = [0u8; 512];
     let mut consecutive_empty_reads = 0;
 
     loop {
-        let timeout_duration = Duration::from_millis(50 + (consecutive_empty_reads * 25));
+        let timeout_duration = Duration::from_millis(25 + (consecutive_empty_reads * 25));
 
         match tokio::time::timeout(timeout_duration, reader.read(&mut read_buffer)).await {
             Ok(Ok(0)) => {
@@ -394,17 +370,6 @@ where
                 break;
             }
             Ok(Ok(n)) => {
-                // 如果数据量大，自动升级缓冲区
-                if body_buffer.len() + n > body_buffer.capacity() * 3 / 4 && body_buffer.capacity() < 131072 {
-                    let mut larger_buffer = if body_buffer.capacity() < 16384 {
-                        global_pools().get_large()
-                    } else {
-                        global_pools().get_extra_large()
-                    };
-                    larger_buffer.extend_from_slice(&body_buffer);
-                    body_buffer = larger_buffer;
-                }
-
                 body_buffer.extend_from_slice(&read_buffer[..n]);
                 consecutive_empty_reads = 0;
             }
@@ -429,7 +394,7 @@ where
     }
 
     // Convert pooled buffer to Bytes for return
-    Ok(body_buffer.into_bytes())
+    Ok(body_buffer.freeze())
 }
 
 /// Send HTTP request and parse response

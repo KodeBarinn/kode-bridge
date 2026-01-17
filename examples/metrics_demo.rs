@@ -1,6 +1,5 @@
 use kode_bridge::{
-    global_metrics, init_metrics, BufferPoolStats, ConfigBuilder, HealthChecker, HealthStatus, MetricsSnapshot,
-    ParserCacheStats,
+    global_metrics, init_metrics, ConfigBuilder, HealthChecker, HealthStatus, MetricsSnapshot, ParserCacheStats,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -82,11 +81,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("============================");
     global_metrics().print_summary();
 
-    // Demonstrate buffer pool integration
-    println!("\n💾 Buffer Pool Statistics:");
-    println!("==========================");
-    demonstrate_buffer_pools();
-
     // Demonstrate parser cache
     println!("\n🧠 Parser Cache Statistics:");
     println!("===========================");
@@ -167,33 +161,6 @@ fn print_health_report(report: &kode_bridge::HealthReport) {
     } else {
         println!("🎉 No issues detected - system is healthy!");
     }
-}
-
-fn demonstrate_buffer_pools() {
-    use kode_bridge::buffer_pool::global_pools;
-
-    let pools = global_pools();
-
-    // Use some buffers
-    let _small = pools.get_small();
-    let _medium = pools.get_medium();
-    let _large = pools.get_large();
-
-    let stats = pools.stats();
-    println!("Small pool:  {} buffers", stats.small_pool_size);
-    println!("Medium pool: {} buffers", stats.medium_pool_size);
-    println!("Large pool:  {} buffers", stats.large_pool_size);
-
-    // Update metrics
-    global_metrics().update_buffer_pool_stats(BufferPoolStats {
-        small_pool_size: stats.small_pool_size,
-        medium_pool_size: stats.medium_pool_size,
-        large_pool_size: stats.large_pool_size,
-        total_allocations: 100,
-        total_reuses: 75,
-    });
-
-    println!("Buffer efficiency: 75% reuse rate");
 }
 
 fn demonstrate_parser_cache() {

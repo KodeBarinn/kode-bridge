@@ -41,7 +41,7 @@ serde_json = "1.0.148"
 serde = { version = "1.0.228", features = ["derive"] }
 httparse = "1.10.1"
 http = "1.4.0"
-bytes = "1.11.0"
+bytes = { version = "1.11.0" }
 tracing = "0.1.44"
 parking_lot = "0.12.5"
 pin-project-lite = "0.2.16"

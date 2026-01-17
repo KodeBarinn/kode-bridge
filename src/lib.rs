@@ -1,4 +1,3 @@
-pub mod buffer_pool;
 pub mod config;
 pub mod errors;
 pub mod http_client;
@@ -252,31 +251,5 @@ mod tests {
         let report = health_checker.check_health();
         assert_eq!(report.status, HealthStatus::Healthy);
         assert!(report.issues.is_empty());
-    }
-
-    #[test]
-    fn test_buffer_pool_integration() {
-        use crate::buffer_pool::global_pools;
-        use crate::metrics::global_metrics;
-
-        let pools = global_pools();
-        let metrics = global_metrics();
-
-        // Get some buffers to test pool usage
-        let _buf1 = pools.get_small();
-        let _buf2 = pools.get_medium();
-        let _buf3 = pools.get_large();
-
-        let stats = pools.stats();
-        metrics.update_buffer_pool_stats(crate::metrics::BufferPoolStats {
-            small_pool_size: stats.small_pool_size,
-            medium_pool_size: stats.medium_pool_size,
-            large_pool_size: stats.large_pool_size,
-            total_allocations: 3,
-            total_reuses: 0,
-        });
-
-        let snapshot = metrics.snapshot();
-        assert_eq!(snapshot.buffer_pool_stats.total_allocations, 3);
     }
 }
