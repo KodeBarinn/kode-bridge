@@ -1,9 +1,9 @@
 use crate::errors::{KodeBridgeError, Result};
 use crate::ipc_http_server::HttpResponse;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut as _, Bytes, BytesMut};
 use http::{HeaderMap, Method, Uri};
 use httparse::{Request, Status};
-use std::io::Write;
+use std::io::Write as _;
 use tokio_util::codec::{Decoder, Encoder};
 
 /// Codec for HTTP over IPC
@@ -97,7 +97,8 @@ impl Decoder for HttpIpcCodec {
                 // We need new headers array because the previous one was for the slice
                 let mut headers = vec![httparse::EMPTY_HEADER; 64];
                 let mut req = Request::new(&mut headers);
-                let status = req.parse(&data).unwrap(); // Should succeed
+                let status = req.parse(&data)?;
+                #[allow(clippy::unwrap_used)]
                 let body_start = status.unwrap();
 
                 let method = req

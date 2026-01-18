@@ -6,7 +6,7 @@
 use crate::codec::HttpIpcCodec;
 use crate::errors::{KodeBridgeError, Result};
 use bytes::Bytes;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt as _, StreamExt as _};
 use http::{HeaderMap, Method, StatusCode, Uri};
 use interprocess::local_socket::{
     tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath, ListenerOptions, Name,
