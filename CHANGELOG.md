@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- Refactored `IpcHttpServer` to use `tokio_util::codec::Framed`, removing manual `BufReader` loops.
+- Implemented `HttpIpcCodec` for efficient HTTP-over-IPC protocol handling.
+- Replaced `Arc<RwLock<ServerStats>>` with `Arc<SharedStats>` using atomic counters (`AtomicU64`) to eliminate lock contention during request handling.
 - Improve IPC HTTP client around 8% performance by using `Bytes` without extra copies.
 - Reduce copying when parsing IPC HTTP requests (zero-copy slice of request body) and avoid oversized read buffers.
 - `criterion` benchmark `ipc_http_version/version_once` improved by ~25% (machine/workload dependent).

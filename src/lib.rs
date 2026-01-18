@@ -1,3 +1,5 @@
+#[cfg(feature = "server")]
+pub mod codec;
 pub mod config;
 pub mod errors;
 pub mod http_client;

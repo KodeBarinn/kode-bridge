@@ -3,8 +3,10 @@
 //! This module provides a high-level HTTP-style server for handling IPC requests
 //! with a focus on ease of use, performance, and flexibility.
 
+use crate::codec::HttpIpcCodec;
 use crate::errors::{KodeBridgeError, Result};
-use bytes::{BufMut as _, Bytes, BytesMut};
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
 use http::{HeaderMap, Method, StatusCode, Uri};
 use interprocess::local_socket::{
     tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath, ListenerOptions, Name,
@@ -17,7 +19,6 @@ use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
 #[cfg(windows)]
 use interprocess::os::windows::security_descriptor::SecurityDescriptor;
 use interprocess::TryClone as _;
-use parking_lot::RwLock;
 use path_tree::PathTree;
 use std::{
     collections::HashMap,
@@ -25,14 +26,12 @@ use std::{
     future::Future,
     path::Path,
     pin::Pin,
+    sync::atomic::{AtomicU64, Ordering},
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader},
-    sync::Semaphore,
-    time::timeout,
-};
+use tokio::{sync::Semaphore, time::timeout};
+use tokio_util::codec::Framed;
 use tracing::{debug, error, info, warn};
 use url::Url;
 #[cfg(windows)]
@@ -371,6 +370,30 @@ impl Default for Router {
     }
 }
 
+/// Internal server statistics with atomic counters
+#[derive(Debug)]
+struct SharedStats {
+    total_connections: AtomicU64,
+    active_connections: AtomicU64,
+    total_requests: AtomicU64,
+    total_responses: AtomicU64,
+    total_errors: AtomicU64,
+    started_at: Instant,
+}
+
+impl SharedStats {
+    fn new() -> Self {
+        Self {
+            total_connections: AtomicU64::new(0),
+            active_connections: AtomicU64::new(0),
+            total_requests: AtomicU64::new(0),
+            total_responses: AtomicU64::new(0),
+            total_errors: AtomicU64::new(0),
+            started_at: Instant::now(),
+        }
+    }
+}
+
 /// Server statistics
 #[derive(Debug, Clone)]
 pub struct ServerStats {
@@ -380,19 +403,6 @@ pub struct ServerStats {
     pub total_responses: u64,
     pub total_errors: u64,
     pub started_at: Instant,
-}
-
-impl ServerStats {
-    fn new() -> Self {
-        Self {
-            total_connections: 0,
-            active_connections: 0,
-            total_requests: 0,
-            total_responses: 0,
-            total_errors: 0,
-            started_at: Instant::now(),
-        }
-    }
 }
 
 impl fmt::Display for ServerStats {
@@ -417,7 +427,7 @@ pub struct IpcHttpServer {
     config: ServerConfig,
     listener_options: ListenerOptions<'static>,
     router: Arc<Router>,
-    stats: Arc<RwLock<ServerStats>>,
+    stats: Arc<SharedStats>,
     connection_semaphore: Arc<Semaphore>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -436,7 +446,7 @@ impl IpcHttpServer {
             config,
             listener_options,
             router: Arc::new(Router::new()),
-            stats: Arc::new(RwLock::new(ServerStats::new())),
+            stats: Arc::new(SharedStats::new()),
             connection_semaphore: Arc::new(Semaphore::new(config.max_connections)),
             shutdown_tx: None,
         })
@@ -455,7 +465,7 @@ impl IpcHttpServer {
             config,
             listener_options,
             router: Arc::new(Router::new()),
-            stats: Arc::new(RwLock::new(ServerStats::new())),
+            stats: Arc::new(SharedStats::new()),
             connection_semaphore,
             shutdown_tx: None,
         })
@@ -486,7 +496,14 @@ impl IpcHttpServer {
     }
 
     pub fn stats(&self) -> ServerStats {
-        self.stats.read().clone()
+        ServerStats {
+            total_connections: self.stats.total_connections.load(Ordering::Relaxed),
+            active_connections: self.stats.active_connections.load(Ordering::Relaxed),
+            total_requests: self.stats.total_requests.load(Ordering::Relaxed),
+            total_responses: self.stats.total_responses.load(Ordering::Relaxed),
+            total_errors: self.stats.total_errors.load(Ordering::Relaxed),
+            started_at: self.stats.started_at,
+        }
     }
 
     pub async fn serve(&mut self) -> Result<()> {
@@ -515,18 +532,14 @@ impl IpcHttpServer {
                             };
 
                             {
-                                let mut stats = self.stats.write();
-                                stats.total_connections += 1;
-                                stats.active_connections += 1;
+                                self.stats.total_connections.fetch_add(1, Ordering::Relaxed);
+                                self.stats.active_connections.fetch_add(1, Ordering::Relaxed);
                             }
 
                             let router = Arc::clone(&self.router);
                             let config = self.config;
                             let stats = Arc::clone(&self.stats);
-                            let connection_id = {
-                                let stats = self.stats.read();
-                                stats.total_connections
-                            };
+                            let connection_id = self.stats.total_connections.load(Ordering::Relaxed);
 
                             tokio::spawn(async move {
                                 if let Err(e) = Self::handle_connection(
@@ -537,13 +550,9 @@ impl IpcHttpServer {
                                     Arc::clone(&stats),
                                 ).await {
                                     error!("Connection {} error: {}", connection_id, e);
-                                    let mut stats = stats.write();
-                                    stats.total_errors += 1;
+                                    stats.total_errors.fetch_add(1, Ordering::Relaxed);
                                 }
-                                {
-                                    let mut stats = stats.write();
-                                    stats.active_connections = stats.active_connections.saturating_sub(1);
-                                }
+                                stats.active_connections.fetch_sub(1, Ordering::Relaxed);
                                 drop(permit);
                             });
                         }
@@ -560,11 +569,13 @@ impl IpcHttpServer {
         }
 
         let start = Instant::now();
-        while self.stats.read().active_connections > 0 && start.elapsed() < self.config.shutdown_timeout {
+        while self.stats.active_connections.load(Ordering::Relaxed) > 0
+            && start.elapsed() < self.config.shutdown_timeout
+        {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let remaining = self.stats.read().active_connections;
+        let remaining = self.stats.active_connections.load(Ordering::Relaxed);
         if remaining > 0 {
             warn!("Shutting down with {} active connections", remaining);
         }
@@ -584,7 +595,7 @@ impl IpcHttpServer {
         connection_id: u64,
         router: Arc<Router>,
         config: ServerConfig,
-        stats: Arc<RwLock<ServerStats>>,
+        stats: Arc<SharedStats>,
     ) -> Result<()> {
         debug!("Handling connection {}", connection_id);
 
@@ -593,18 +604,15 @@ impl IpcHttpServer {
             connected_at: Instant::now(),
         };
 
-        let mut stream = BufReader::with_capacity(config.max_header_size, stream);
+        let codec = HttpIpcCodec::new(config.max_header_size, config.max_request_size);
+        let mut framed = Framed::new(stream, codec);
 
         loop {
-            let request_data = match timeout(config.read_timeout, Self::read_request(&mut stream, &config)).await {
-                Ok(Ok(Some(data))) => data,
-                Ok(Ok(None)) => {
+            let request_result = match timeout(config.read_timeout, framed.next()).await {
+                Ok(Some(res)) => res,
+                Ok(None) => {
                     debug!("Connection {} closed by client", connection_id);
                     break;
-                }
-                Ok(Err(e)) => {
-                    error!("Failed to read request from connection {}: {}", connection_id, e);
-                    return Err(e);
                 }
                 Err(_) => {
                     warn!("Read timeout on connection {}", connection_id);
@@ -612,21 +620,28 @@ impl IpcHttpServer {
                 }
             };
 
-            let mut request_context = match Self::parse_request(request_data, &client_info, config.max_request_size) {
-                Ok(ctx) => ctx,
+            let req_parts = match request_result {
+                Ok(parts) => parts,
                 Err(e) => {
                     error!("Failed to parse request: {}", e);
                     let response = HttpResponse::error(StatusCode::BAD_REQUEST, "Bad Request");
-                    Self::write_response(&mut stream, &response, &config).await?;
-                    stats.write().total_errors += 1;
+                    let _ = framed.send(response).await;
+                    stats.total_errors.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
             };
 
-            {
-                let mut stats = stats.write();
-                stats.total_requests += 1;
-            }
+            let mut request_context = RequestContext {
+                method: req_parts.method,
+                uri: req_parts.uri,
+                headers: req_parts.headers,
+                body: req_parts.body,
+                client_info: client_info.clone(),
+                timestamp: Instant::now(),
+                path_params: HashMap::new(),
+            };
+
+            stats.total_requests.fetch_add(1, Ordering::Relaxed);
 
             if config.enable_logging {
                 info!(
@@ -657,16 +672,17 @@ impl IpcHttpServer {
                 HttpResponse::not_found()
             };
 
-            match Self::write_response(&mut stream, &response, &config).await {
+            let status_code = response.status;
+            match framed.send(response).await {
                 Ok(_) => {
-                    stats.write().total_responses += 1;
+                    stats.total_responses.fetch_add(1, Ordering::Relaxed);
                     if config.enable_logging {
-                        info!("✅ {} {} - {}", method, uri, response.status);
+                        info!("✅ {} {} - {}", method, uri, status_code);
                     }
                 }
                 Err(e) => {
                     error!("Failed to write response: {}", e);
-                    stats.write().total_errors += 1;
+                    stats.total_errors.fetch_add(1, Ordering::Relaxed);
                     return Err(e);
                 }
             }
@@ -674,179 +690,6 @@ impl IpcHttpServer {
 
         debug!("Connection {} finished", connection_id);
         Ok(())
-    }
-
-    async fn read_request(
-        stream: &mut BufReader<LocalSocketStream>,
-        config: &ServerConfig,
-    ) -> Result<Option<BytesMut>> {
-        let mut buffer = BytesMut::with_capacity(config.max_header_size);
-
-        loop {
-            if buffer.len() > config.max_header_size {
-                return Err(KodeBridgeError::validation("Header size exceeds maximum allowed"));
-            }
-
-            let n = stream.read_buf(&mut buffer).await?;
-
-            if n == 0 {
-                if buffer.is_empty() {
-                    return Ok(None);
-                }
-                break;
-            }
-
-            if let Some(header_end) = Self::find_header_end(&buffer) {
-                let headers_str = String::from_utf8_lossy(&buffer[..header_end]);
-                if let Some(content_length) = Self::extract_content_length(&headers_str) {
-                    let body_start = header_end + 4;
-                    let total_expected = body_start + content_length;
-
-                    if total_expected > config.max_request_size {
-                        return Err(KodeBridgeError::validation("Request size exceeds maximum allowed"));
-                    }
-
-                    while buffer.len() < total_expected {
-                        let n = stream.read_buf(&mut buffer).await?;
-                        if n == 0 {
-                            break;
-                        }
-                    }
-                }
-                break;
-            }
-        }
-
-        Ok(Some(buffer))
-    }
-
-    fn find_header_end(data: &[u8]) -> Option<usize> {
-        data.windows(4).position(|window| window == b"\r\n\r\n")
-    }
-
-    fn extract_content_length(headers: &str) -> Option<usize> {
-        for line in headers.lines() {
-            if let Some(value) = line
-                .strip_prefix("Content-Length:")
-                .or_else(|| line.strip_prefix("content-length:"))
-            {
-                if let Ok(length) = value.trim().parse::<usize>() {
-                    return Some(length);
-                }
-            }
-        }
-        None
-    }
-
-    fn parse_request(data: BytesMut, client_info: &ClientInfo, max_size: usize) -> Result<RequestContext> {
-        if data.len() > max_size {
-            return Err(KodeBridgeError::validation("Request too large"));
-        }
-
-        let mut headers = vec![httparse::EMPTY_HEADER; 64].into_boxed_slice();
-        let mut req = httparse::Request::new(&mut headers);
-        let res = req
-            .parse(&data)
-            .map_err(|e| KodeBridgeError::validation(format!("Failed to parse HTTP request: {}", e)))?;
-
-        if res.is_partial() {
-            return Err(KodeBridgeError::validation("Incomplete HTTP request"));
-        }
-
-        let method = req
-            .method
-            .ok_or_else(|| KodeBridgeError::validation("Missing HTTP method"))?;
-        let method = Method::from_bytes(method.as_bytes())
-            .map_err(|e| KodeBridgeError::validation(format!("Invalid HTTP method: {}", e)))?;
-
-        let path = req
-            .path
-            .ok_or_else(|| KodeBridgeError::validation("Missing HTTP path"))?;
-        let uri = path
-            .parse::<Uri>()
-            .map_err(|e| KodeBridgeError::validation(format!("Invalid URI: {}", e)))?;
-
-        let mut header_map = HeaderMap::new();
-        for header in req.headers {
-            if let (Ok(name), Ok(value)) = (
-                header.name.parse::<http::header::HeaderName>(),
-                std::str::from_utf8(header.value)
-                    .map_err(|_| KodeBridgeError::validation("Invalid header value"))?
-                    .parse::<http::header::HeaderValue>(),
-            ) {
-                header_map.insert(name, value);
-            }
-        }
-
-        let body_start = res.unwrap();
-        let bytes = data.freeze();
-        let body = if bytes.len() > body_start {
-            bytes.slice(body_start..)
-        } else {
-            Bytes::new()
-        };
-
-        Ok(RequestContext {
-            method,
-            uri,
-            headers: header_map,
-            body,
-            client_info: ClientInfo {
-                connection_id: client_info.connection_id,
-                connected_at: client_info.connected_at,
-            },
-            timestamp: Instant::now(),
-            path_params: HashMap::new(),
-        })
-    }
-
-    async fn write_response(
-        stream: &mut BufReader<LocalSocketStream>,
-        response: &HttpResponse,
-        config: &ServerConfig,
-    ) -> Result<()> {
-        timeout(config.write_timeout, async {
-            // Use BytesMut for efficient buffer building
-            let mut buf = BytesMut::with_capacity(4096);
-
-            // Status line
-            buf.put(
-                format!(
-                    "HTTP/1.1 {} {}\r\n",
-                    response.status.as_u16(),
-                    response.status.canonical_reason().unwrap_or("Unknown")
-                )
-                .as_bytes(),
-            );
-
-            // Headers
-            let mut has_content_length = false;
-            for (key, value) in response.headers.iter() {
-                buf.put(format!("{}: {}\r\n", key, value.to_str().unwrap_or("")).as_bytes());
-                if key.as_str().eq_ignore_ascii_case("content-length") {
-                    has_content_length = true;
-                }
-            }
-
-            // Content-Length header if not present
-            if !has_content_length {
-                buf.put(format!("Content-Length: {}\r\n", response.body.len()).as_bytes());
-            }
-
-            // End of headers
-            buf.put_slice(b"\r\n");
-
-            // Body
-            buf.put(response.body.as_ref());
-
-            // Write buffer
-            stream.write_all(&buf).await?;
-            stream.flush().await?;
-
-            Ok::<(), KodeBridgeError>(())
-        })
-        .await
-        .map_err(|_| KodeBridgeError::timeout_msg("Response write timeout"))?
     }
 }
 
