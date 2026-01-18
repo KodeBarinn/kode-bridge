@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["buffer_pool","config","errors","http_client","ipc_http_client","ipc_http_server","ipc_stream_client","ipc_stream_server","metrics","parser_cache","pool","response","retry","stream_client"]};
+window.SIDEBAR_ITEMS = {"mod":["codec","config","errors","http_client","ipc_http_client","ipc_http_server","ipc_stream_client","ipc_stream_server","metrics","parser_cache","pool","response","retry","stream_client"]};
