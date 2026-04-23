@@ -23,7 +23,7 @@ server = ["path-tree"]
 full = ["client", "server"]
 
 [dependencies]
-interprocess = { version = "2.2.3", features = ["tokio"] }
+interprocess = { version = "2.4", features = ["tokio"] }
 tokio = { version = "1.49.0", features = [
     "rt",
     "rt-multi-thread",
