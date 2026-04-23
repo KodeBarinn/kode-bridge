@@ -519,27 +519,32 @@ impl IpcHttpServer {
         self.shutdown_tx = Some(shutdown_tx);
 
         loop {
+            let permit = tokio::select! {
+                permit_result = Arc::clone(&self.connection_semaphore).acquire_owned() => {
+                    match permit_result {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            warn!("Connection limiter closed, stopping HTTP server");
+                            break;
+                        }
+                    }
+                }
+                _ = &mut shutdown_rx => {
+                    info!("Server shutdown requested");
+                    break;
+                }
+            };
+
             tokio::select! {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok(stream) => {
-                            let permit = match Arc::clone(&self.connection_semaphore).try_acquire_owned() {
-                                Ok(permit) => permit,
-                                Err(_) => {
-                                    warn!("Maximum connections reached, rejecting new connection");
-                                    continue;
-                                }
-                            };
-
-                            {
-                                self.stats.total_connections.fetch_add(1, Ordering::Relaxed);
-                                self.stats.active_connections.fetch_add(1, Ordering::Relaxed);
-                            }
+                            let connection_id = self.stats.total_connections.fetch_add(1, Ordering::Relaxed) + 1;
+                            self.stats.active_connections.fetch_add(1, Ordering::Relaxed);
 
                             let router = Arc::clone(&self.router);
                             let config = self.config;
                             let stats = Arc::clone(&self.stats);
-                            let connection_id = self.stats.total_connections.load(Ordering::Relaxed);
 
                             tokio::spawn(async move {
                                 if let Err(e) = Self::handle_connection(
@@ -557,11 +562,13 @@ impl IpcHttpServer {
                             });
                         }
                         Err(e) => {
+                            drop(permit);
                             error!("Failed to accept connection: {}", e);
                         }
                     }
                 }
                 _ = &mut shutdown_rx => {
+                    drop(permit);
                     info!("Server shutdown requested");
                     break;
                 }

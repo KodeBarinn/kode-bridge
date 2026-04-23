@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.7] - 2026-04-23
+
+### Fixed
+
+- Move connection permit acquisition ahead of `accept()` in both `IpcHttpServer` and `IpcStreamServer` so excess socket connection attempts do not first consume process file descriptors.
+- Reduce temporary work in `HttpIpcCodec` by parsing request headers once instead of reparsing the full request, lowering per-request allocation and CPU overhead.
+
 ## [0.3.6] - 2026-01-18
 
 ### Performance

@@ -550,56 +550,68 @@ impl IpcStreamServer {
 
         // Main server loop
         loop {
+            let permit = tokio::select! {
+                permit_result = Arc::clone(&self.connection_semaphore).acquire_owned() => {
+                    match permit_result {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            warn!("Connection limiter closed, stopping stream server");
+                            break;
+                        }
+                    }
+                }
+                _ = &mut shutdown_rx => {
+                    info!("Stream server shutdown requested");
+                    break;
+                }
+            };
+
             tokio::select! {
                 // Accept new connections
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok(stream) => {
-                            // Acquire connection permit
-                            if let Ok(permit) = Arc::clone(&self.connection_semaphore).try_acquire_owned() {
-                                let client_id = self.client_id_counter.fetch_add(1, Ordering::SeqCst);
+                            let client_id = self.client_id_counter.fetch_add(1, Ordering::SeqCst);
 
-                                {
-                                    let mut stats = self.stats.write();
-                                    stats.total_connections += 1;
-                                    stats.active_connections += 1;
+                            {
+                                let mut stats = self.stats.write();
+                                stats.total_connections += 1;
+                                stats.active_connections += 1;
+                            }
+
+                            let client = StreamClient::new(client_id, format!("client_{}", client_id));
+                            self.clients.write().insert(client_id, client);
+
+                            let config = self.config.clone();
+                            let stats = Arc::clone(&self.stats);
+                            let clients = Arc::clone(&self.clients);
+                            let broadcast_rx = broadcast_tx.subscribe();
+
+                            tokio::spawn(async move {
+                                if let Err(e) = Self::handle_stream_client(
+                                    stream,
+                                    client_id,
+                                    broadcast_rx,
+                                    config,
+                                    Arc::clone(&stats),
+                                    Arc::clone(&clients),
+                                ).await {
+                                    error!("Stream client {} error: {}", client_id, e);
+                                    stats.write().total_errors += 1;
                                 }
 
-                                let client = StreamClient::new(client_id, format!("client_{}", client_id));
-                                self.clients.write().insert(client_id, client);
+                                // Remove client and update stats
+                                clients.write().remove(&client_id);
+                                {
+                                    let mut stats = stats.write();
+                                    stats.active_connections = stats.active_connections.saturating_sub(1);
+                                }
 
-                                let config = self.config.clone();
-                                let stats = Arc::clone(&self.stats);
-                                let clients = Arc::clone(&self.clients);
-                                let broadcast_rx = broadcast_tx.subscribe();
-
-                                tokio::spawn(async move {
-                                    if let Err(e) = Self::handle_stream_client(
-                                        stream,
-                                        client_id,
-                                        broadcast_rx,
-                                        config,
-                                        Arc::clone(&stats),
-                                        Arc::clone(&clients),
-                                    ).await {
-                                        error!("Stream client {} error: {}", client_id, e);
-                                        stats.write().total_errors += 1;
-                                    }
-
-                                    // Remove client and update stats
-                                    clients.write().remove(&client_id);
-                                    {
-                                        let mut stats = stats.write();
-                                        stats.active_connections = stats.active_connections.saturating_sub(1);
-                                    }
-
-                                    drop(permit); // Release connection slot
-                                });
-                            } else {
-                                warn!("Maximum connections reached, rejecting new connection");
-                            }
+                                drop(permit); // Release connection slot
+                            });
                         }
                         Err(e) => {
+                            drop(permit);
                             error!("Failed to accept connection: {}", e);
                         }
                     }
@@ -607,6 +619,7 @@ impl IpcStreamServer {
 
                 // Handle shutdown signal
                 _ = &mut shutdown_rx => {
+                    drop(permit);
                     info!("Stream server shutdown requested");
                     break;
                 }

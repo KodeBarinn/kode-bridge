@@ -53,20 +53,18 @@ impl Decoder for HttpIpcCodec {
             }
         };
 
-        // Parse headers to get Content-Length
+        // Parse headers once so we can enforce limits without reparsing the request.
         let headers_len = header_end + 4; // Include \r\n\r\n
 
         let mut headers = vec![httparse::EMPTY_HEADER; 64];
         let mut req = Request::new(&mut headers);
 
-        // We only parse the header part to get Content-Length
         let status = req
             .parse(&src[..headers_len])
             .map_err(|e| KodeBridgeError::validation(format!("Failed to parse HTTP request: {}", e)))?;
 
         match status {
-            Status::Complete(_body_start) => {
-                // Find content-length
+            Status::Complete(body_start) => {
                 let mut content_length = 0;
                 for header in req.headers.iter() {
                     if header.name.eq_ignore_ascii_case("Content-Length") {
@@ -85,21 +83,9 @@ impl Decoder for HttpIpcCodec {
                 }
 
                 if src.len() < total_len {
-                    // Reserve space for the rest of the body
                     src.reserve(total_len - src.len());
                     return Ok(None);
                 }
-
-                // We have the full request. Split the buffer.
-                let data = src.split_to(total_len);
-
-                // Re-parse the full request to extract fields
-                // We need new headers array because the previous one was for the slice
-                let mut headers = vec![httparse::EMPTY_HEADER; 64];
-                let mut req = Request::new(&mut headers);
-                let status = req.parse(&data)?;
-                #[allow(clippy::unwrap_used)]
-                let body_start = status.unwrap();
 
                 let method = req
                     .method
@@ -124,6 +110,8 @@ impl Decoder for HttpIpcCodec {
                     }
                 }
 
+                // We have the full request. Split the buffer only after extracting owned metadata.
+                let data = src.split_to(total_len);
                 let bytes = data.freeze();
                 let body = bytes.slice(body_start..);
 
