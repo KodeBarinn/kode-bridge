@@ -13,7 +13,7 @@ pub struct HttpIpcCodec {
 }
 
 impl HttpIpcCodec {
-    pub fn new(max_header_size: usize, max_request_size: usize) -> Self {
+    pub const fn new(max_header_size: usize, max_request_size: usize) -> Self {
         Self {
             max_header_size,
             max_request_size,
