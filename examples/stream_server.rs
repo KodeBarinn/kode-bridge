@@ -6,7 +6,7 @@
 #![allow(clippy::expect_used, clippy::useless_vec)]
 
 use kode_bridge::{IpcStreamServer, JsonDataSource, Result, StreamMessage, StreamServerConfig};
-use rand::Rng as _;
+use rand::RngExt as _;
 use serde_json::json;
 use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
