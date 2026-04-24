@@ -56,13 +56,15 @@ impl BenchContext {
             Ok(response) => response,
             Err(err) => panic!("failed to encode small benchmark response: {err}"),
         });
-        let ok_response_large = encode_response(match HttpResponse::json(&json!({
+        let ok_response_large = encode_response(
+            match HttpResponse::json(&json!({
                 "ok": true,
                 "payload": "x".repeat(LARGE_JSON_PAYLOAD_SIZE)
             })) {
-            Ok(response) => response,
-            Err(err) => panic!("failed to encode large benchmark response: {err}"),
-        });
+                Ok(response) => response,
+                Err(err) => panic!("failed to encode large benchmark response: {err}"),
+            },
+        );
 
         let router = Arc::new(
             Router::new()

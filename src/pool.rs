@@ -354,11 +354,13 @@ impl ConnectionPool {
 
     /// Get a fresh connection optimized for PUT requests
     pub async fn get_fresh_connection(&self) -> Result<PooledConnection> {
-        let permit =
-            tokio::time::timeout(Duration::from_millis(100), Arc::clone(&self.inner.semaphore).acquire_owned())
-            .await
-            .map_err(|_| KodeBridgeError::timeout(100))?
-            .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
+        let permit = tokio::time::timeout(
+            Duration::from_millis(100),
+            Arc::clone(&self.inner.semaphore).acquire_owned(),
+        )
+        .await
+        .map_err(|_| KodeBridgeError::timeout(100))?
+        .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
 
         match self.inner.get_fresh_connection().await {
             Ok(stream) => {
