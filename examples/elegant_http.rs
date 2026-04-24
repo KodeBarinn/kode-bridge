@@ -205,6 +205,7 @@ async fn main() -> Result<()> {
     if let Some(stats) = client.pool_stats() {
         println!("\n📊 Connection Pool Stats: {}", stats);
     }
+    drop(client);
 
     println!("\n🎯 Benefits of the new HTTP client API:");
     println!("📌 HTTP-like methods: get(), post(), put(), delete(), patch(), head()");

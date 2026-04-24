@@ -1,3 +1,5 @@
+#![allow(clippy::panic)]
+
 use bytes::{Bytes, BytesMut};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use http::Method;
@@ -36,22 +38,31 @@ struct BenchContext {
 
 impl BenchContext {
     fn new() -> Self {
-        let rt = Runtime::new().expect("failed to create benchmark runtime");
-        let client = IpcHttpClient::new("/tmp/kode-bridge-bench.sock").expect("failed to create benchmark client");
+        let rt = match Runtime::new() {
+            Ok(rt) => rt,
+            Err(err) => panic!("failed to create benchmark runtime: {err}"),
+        };
+        let client = match IpcHttpClient::new("/tmp/kode-bridge-bench.sock") {
+            Ok(client) => client,
+            Err(err) => panic!("failed to create benchmark client: {err}"),
+        };
 
         let small_payload = build_payload(SMALL_JSON_PAYLOAD_SIZE);
         let large_payload = build_payload(LARGE_JSON_PAYLOAD_SIZE);
         let small_batch = build_batch(SMALL_BATCH_SIZE, SMALL_JSON_PAYLOAD_SIZE);
         let large_batch = build_batch(LARGE_BATCH_SIZE, SMALL_JSON_PAYLOAD_SIZE);
 
-        let ok_response_small = encode_response(HttpResponse::json(&json!({"ok": true})).expect("encode response"));
-        let ok_response_large = encode_response(
-            HttpResponse::json(&json!({
+        let ok_response_small = encode_response(match HttpResponse::json(&json!({"ok": true})) {
+            Ok(response) => response,
+            Err(err) => panic!("failed to encode small benchmark response: {err}"),
+        });
+        let ok_response_large = encode_response(match HttpResponse::json(&json!({
                 "ok": true,
                 "payload": "x".repeat(LARGE_JSON_PAYLOAD_SIZE)
-            }))
-            .expect("encode response"),
-        );
+            })) {
+            Ok(response) => response,
+            Err(err) => panic!("failed to encode large benchmark response: {err}"),
+        });
 
         let router = Arc::new(
             Router::new()
@@ -60,32 +71,39 @@ impl BenchContext {
                 })
                 .put("/config", |ctx| async move {
                     let payload = ctx.json::<Value>()?;
-                    Ok(HttpResponse::json(&json!({
+                    HttpResponse::json(&json!({
                         "accepted": true,
                         "payload_size": payload.to_string().len()
-                    }))?)
+                    }))
                 })
                 .put("/batch/:id", |ctx| async move {
                     let payload = ctx.json::<Value>()?;
                     let id = ctx.path_params().get("id").cloned().unwrap_or_default();
-                    Ok(HttpResponse::json(&json!({
+                    HttpResponse::json(&json!({
                         "id": id,
                         "payload_size": payload.to_string().len()
-                    }))?)
+                    }))
                 }),
         );
 
-        let raw_get_request = RequestBuilder::new(Method::GET, "/version".to_string())
-            .build()
-            .expect("failed to build GET request");
-        let raw_put_small_request = RequestBuilder::new(Method::PUT, "/config".to_string())
+        let raw_get_request = match RequestBuilder::new(Method::GET, "/version".to_string()).build() {
+            Ok(request) => request,
+            Err(err) => panic!("failed to build GET request: {err}"),
+        };
+        let raw_put_small_request = match RequestBuilder::new(Method::PUT, "/config".to_string())
             .json(&small_payload)
             .and_then(RequestBuilder::build)
-            .expect("failed to build small PUT request");
-        let raw_put_large_request = RequestBuilder::new(Method::PUT, "/config".to_string())
+        {
+            Ok(request) => request,
+            Err(err) => panic!("failed to build small PUT request: {err}"),
+        };
+        let raw_put_large_request = match RequestBuilder::new(Method::PUT, "/config".to_string())
             .json(&large_payload)
             .and_then(RequestBuilder::build)
-            .expect("failed to build large PUT request");
+        {
+            Ok(request) => request,
+            Err(err) => panic!("failed to build large PUT request: {err}"),
+        };
 
         Self {
             rt,
@@ -122,9 +140,9 @@ fn build_batch(batch_size: usize, payload_size: usize) -> Vec<(String, Value)> {
 fn encode_response(response: HttpResponse) -> Bytes {
     let mut codec = HttpIpcCodec::new(4096, 2 * 1024 * 1024);
     let mut buffer = BytesMut::new();
-    codec
-        .encode(response, &mut buffer)
-        .expect("failed to encode response");
+    if let Err(err) = codec.encode(response, &mut buffer) {
+        panic!("failed to encode response: {err}");
+    }
     buffer.freeze()
 }
 
@@ -134,34 +152,35 @@ async fn client_roundtrip_once(request: Bytes, response: Bytes) {
 
     let server_task = tokio::spawn(async move {
         let mut request_buffer = vec![0u8; request_len];
-        server_stream
-            .read_exact(&mut request_buffer)
-            .await
-            .expect("failed to read benchmark request");
-        server_stream
-            .write_all(&response)
-            .await
-            .expect("failed to write benchmark response");
-        server_stream
-            .flush()
-            .await
-            .expect("failed to flush response");
+        if let Err(err) = server_stream.read_exact(&mut request_buffer).await {
+            panic!("failed to read benchmark request: {err}");
+        }
+        if let Err(err) = server_stream.write_all(&response).await {
+            panic!("failed to write benchmark response: {err}");
+        }
+        if let Err(err) = server_stream.flush().await {
+            panic!("failed to flush response: {err}");
+        }
     });
 
-    let response = send_request(&mut client_stream, request)
-        .await
-        .expect("client roundtrip failed");
+    let response = match send_request(&mut client_stream, request).await {
+        Ok(response) => response,
+        Err(err) => panic!("client roundtrip failed: {err}"),
+    };
     assert!(response.is_success());
 
-    server_task.await.expect("benchmark server task failed");
+    if let Err(err) = server_task.await {
+        panic!("benchmark server task failed: {err}");
+    }
 }
 
 async fn server_pipeline_once(router: Arc<Router>, codec: &mut HttpIpcCodec, request: Bytes) {
     let mut src = BytesMut::from(request.as_ref());
-    let parsed = codec
-        .decode(&mut src)
-        .expect("server decode failed")
-        .expect("expected complete request");
+    let parsed = match codec.decode(&mut src) {
+        Ok(Some(request)) => request,
+        Ok(None) => panic!("expected complete request"),
+        Err(err) => panic!("server decode failed: {err}"),
+    };
 
     let mut context = RequestContext {
         method: parsed.method,
@@ -179,15 +198,18 @@ async fn server_pipeline_once(router: Arc<Router>, codec: &mut HttpIpcCodec, req
     let response = if let Some((handler, params)) = router.find_handler_and_params(&context.method, context.uri.path())
     {
         context.path_params = params;
-        (handler)(context).await.expect("handler failed")
+        match (handler)(context).await {
+            Ok(response) => response,
+            Err(err) => panic!("handler failed: {err}"),
+        }
     } else {
         HttpResponse::not_found()
     };
 
     let mut encoded = BytesMut::new();
-    codec
-        .encode(response, &mut encoded)
-        .expect("server encode failed");
+    if let Err(err) = codec.encode(response, &mut encoded) {
+        panic!("server encode failed: {err}");
+    }
     black_box(encoded);
 }
 

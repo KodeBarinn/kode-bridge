@@ -104,7 +104,7 @@ impl PooledConnection {
     }
 
     /// Mark the connection as broken so it is not returned to the pool.
-    pub fn invalidate(&mut self) {
+    pub const fn invalidate(&mut self) {
         self.reusable = false;
     }
 
@@ -193,7 +193,7 @@ impl ConnectionPoolInner {
     async fn preheat_fresh_connections(&self, count: usize) {
         let mut successful = 0;
         for _ in 0..count {
-            let Ok(permit) = self.semaphore.clone().try_acquire_owned() else {
+            let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
                 break;
             };
 
@@ -328,7 +328,7 @@ impl ConnectionPool {
         }
 
         let timeout = self.inner.config.connection_timeout();
-        let permit = tokio::time::timeout(timeout, self.inner.semaphore.clone().acquire_owned())
+        let permit = tokio::time::timeout(timeout, Arc::clone(&self.inner.semaphore).acquire_owned())
             .await
             .map_err(|_| KodeBridgeError::timeout(timeout.as_millis() as u64))?
             .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
@@ -354,7 +354,8 @@ impl ConnectionPool {
 
     /// Get a fresh connection optimized for PUT requests
     pub async fn get_fresh_connection(&self) -> Result<PooledConnection> {
-        let permit = tokio::time::timeout(Duration::from_millis(100), self.inner.semaphore.clone().acquire_owned())
+        let permit =
+            tokio::time::timeout(Duration::from_millis(100), Arc::clone(&self.inner.semaphore).acquire_owned())
             .await
             .map_err(|_| KodeBridgeError::timeout(100))?
             .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;

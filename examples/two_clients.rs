@@ -174,6 +174,7 @@ async fn main() -> Result<()> {
     if let Some(stats) = http_client.pool_stats() {
         println!("\n📊 HTTP Client Pool Stats: {}", stats);
     }
+    drop(http_client);
 
     println!("\n🎯 Architecture Comparison:");
     println!("┌─────────────────┬─────────────────────┬─────────────────────┐");

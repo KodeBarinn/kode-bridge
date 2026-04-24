@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
     if let Some(stats) = http_client.pool_stats() {
         println!("\n📊 Connection Pool Stats: {}", stats);
     }
+    drop(http_client);
 
     println!("\n✨ Key Features:");
     println!("  • Modern async/await API with fluent interface");

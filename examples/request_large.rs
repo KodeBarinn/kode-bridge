@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
     if let Some(stats) = client.pool_stats() {
         println!("📊 Connection Pool Stats: {}", stats);
     }
+    drop(client);
 
     Ok(())
 }

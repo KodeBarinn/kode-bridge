@@ -263,6 +263,7 @@ async fn main() -> Result<()> {
 
     // 清理资源
     client.close();
+    drop(client);
 
     println!();
     println!("🎯 Concurrent testing completed!");

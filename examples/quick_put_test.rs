@@ -135,6 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let batch_responses = client.put_batch(batch_requests).await?;
     let batch_duration = start.elapsed();
+    drop(client);
 
     println!(
         "   ✅ {} batch PUTs completed in {:?} (avg: {:?})",

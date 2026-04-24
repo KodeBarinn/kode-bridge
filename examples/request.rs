@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
     if let Some(stats) = client.pool_stats() {
         println!("📊 Pool Stats: {}", stats);
     }
+    drop(client);
 
     Ok(())
 }
