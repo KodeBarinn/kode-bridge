@@ -155,8 +155,23 @@ impl RequestBuilder {
         self
     }
 
+    /// Set a pre-serialized body and content type.
+    pub fn body_bytes(mut self, body: Bytes, content_type: &'static str) -> Result<Self> {
+        self.headers
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+
+        let content_length = body.len().to_string();
+        self.headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&content_length).map_err(|e| KodeBridgeError::Http(e.into()))?,
+        );
+
+        self.body = Some(body);
+        Ok(self)
+    }
+
     /// Set JSON body with optimized serialization
-    pub fn json<T>(mut self, body: &T) -> Result<Self>
+    pub fn json<T>(self, body: &T) -> Result<Self>
     where
         T: Serialize,
     {
@@ -166,17 +181,7 @@ impl RequestBuilder {
             serde_json::to_writer(writer, body).map_err(KodeBridgeError::from)?;
         }
 
-        self.headers
-            .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-        let content_length = buffer.len().to_string();
-        self.headers.insert(
-            header::CONTENT_LENGTH,
-            HeaderValue::from_str(&content_length).map_err(|e| KodeBridgeError::Http(e.into()))?,
-        );
-
-        self.body = Some(buffer.freeze());
-        Ok(self)
+        self.body_bytes(buffer.freeze(), "application/json")
     }
 
     /// Build the HTTP request as bytes with optimized allocation

@@ -12,6 +12,7 @@ use crate::http_client::{send_request, RequestBuilder, Response};
 use crate::metrics::global_metrics;
 use crate::pool::{ConnectionPool, PoolConfig, PooledConnection};
 use crate::retry::{RetryConfig, RetryExecutor};
+use bytes::Bytes;
 use http::Method;
 use std::str::FromStr as _;
 use tracing::{debug, trace};
@@ -66,13 +67,18 @@ pub struct HttpRequestBuilder<'a> {
     client: &'a IpcHttpClient,
     method: Method,
     path: String,
-    body: Option<Value>,
+    body: Option<RequestBody>,
     timeout: Option<Duration>,
     headers: Vec<(String, String)>,
     /// PUT专用优化标志
     put_optimized: bool,
     /// 预期数据大小，用于选择合适的缓冲区和超时
     expected_size: Option<usize>,
+}
+
+enum RequestBody {
+    Json(Value),
+    JsonBytes(Bytes),
 }
 
 /// Enhanced HTTP response wrapper with chainable methods
@@ -301,8 +307,13 @@ impl IpcHttpClient {
                     match &mut connection {
                         Either::Pool(conn) => {
                             if let Some(stream) = conn.stream() {
-                                send_request(stream, request.clone()).await
+                                let result = send_request(stream, request.clone()).await;
+                                if result.is_err() {
+                                    conn.invalidate();
+                                }
+                                result
                             } else {
+                                conn.invalidate();
                                 Err(KodeBridgeError::connection("Pooled connection is invalid"))
                             }
                         }
@@ -324,7 +335,7 @@ impl IpcHttpClient {
         &self,
         method: &str,
         path: &str,
-        body: Option<&Value>,
+        body: Option<&RequestBody>,
         headers: &[(String, String)],
         timeout: Duration,
         is_put_optimized: bool,
@@ -340,8 +351,11 @@ impl IpcHttpClient {
             builder = builder.header(key.as_str(), value.as_str());
         }
 
-        if let Some(json_body) = body {
-            builder = builder.json(json_body)?;
+        if let Some(body) = body {
+            builder = match body {
+                RequestBody::Json(value) => builder.json(value)?,
+                RequestBody::JsonBytes(bytes) => builder.body_bytes(bytes.clone(), "application/json")?,
+            };
         }
 
         let request = builder.build()?;
@@ -374,8 +388,13 @@ impl IpcHttpClient {
                     match &mut connection {
                         Either::Pool(conn) => {
                             if let Some(stream) = conn.stream() {
-                                send_request(stream, request.clone()).await
+                                let result = send_request(stream, request.clone()).await;
+                                if result.is_err() {
+                                    conn.invalidate();
+                                }
+                                result
                             } else {
+                                conn.invalidate();
                                 Err(KodeBridgeError::connection("Pooled connection is invalid"))
                             }
                         }
@@ -448,26 +467,27 @@ impl IpcHttpClient {
             return Ok(Vec::new());
         }
 
-        // 限制并发数以避免过载
         let concurrent_limit = std::cmp::min(self.config.max_concurrent_requests, batch_size);
         let mut responses = Vec::with_capacity(batch_size);
+        let mut pending = Vec::with_capacity(concurrent_limit);
 
-        // 分批处理以控制内存使用和网络负载
-        for chunk in requests.chunks(concurrent_limit) {
-            let mut futures = Vec::new();
+        for (path, body) in requests {
+            let body = Bytes::from(body.to_string());
+            pending.push(self.put(&path).json_bytes(body).optimize_for_put().send());
 
-            for (path, body) in chunk {
-                let path = path.clone();
-                let body = body.clone();
-
-                let future = self.put(&path).json_body(&body).optimize_for_put().send();
-
-                futures.push(future);
+            if pending.len() == concurrent_limit {
+                let chunk_results = futures::future::join_all(std::mem::take(&mut pending)).await;
+                for result in chunk_results {
+                    match result {
+                        Ok(response) => responses.push(response),
+                        Err(e) => return Err(e),
+                    }
+                }
             }
+        }
 
-            // 并发等待当前批次完成
-            let chunk_results = futures::future::join_all(futures).await;
-
+        if !pending.is_empty() {
+            let chunk_results = futures::future::join_all(pending).await;
             for result in chunk_results {
                 match result {
                     Ok(response) => responses.push(response),
@@ -552,15 +572,14 @@ impl<'a> HttpRequestBuilder<'a> {
 
     /// Set JSON body
     pub fn json_body(mut self, body: &Value) -> Self {
-        self.body = Some(body.clone());
+        self.body = Some(RequestBody::Json(body.clone()));
+        self
+    }
 
-        // 为PUT请求估算数据大小以优化处理
-        if self.method == Method::PUT {
-            if let Ok(json_bytes) = serde_json::to_vec(body) {
-                self.expected_size = Some(json_bytes.len());
-            }
-        }
-
+    /// Set a pre-serialized JSON body.
+    pub fn json_bytes(mut self, body: Bytes) -> Self {
+        self.expected_size = Some(body.len());
+        self.body = Some(RequestBody::JsonBytes(body));
         self
     }
 

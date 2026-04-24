@@ -66,9 +66,9 @@ pub struct StreamServerConfig {
 impl Default for StreamServerConfig {
     fn default() -> Self {
         Self {
-            max_connections: 200,
+            max_connections: 64,
             buffer_size: 65536,
-            write_timeout: Duration::from_secs(10),
+            write_timeout: Duration::from_secs(5),
             max_message_size: 1024 * 1024, // 1MB
             enable_logging: true,
             shutdown_timeout: Duration::from_secs(5),

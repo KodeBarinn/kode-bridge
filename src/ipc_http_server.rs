@@ -52,6 +52,8 @@ pub struct ServerConfig {
     pub max_header_size: usize,
     /// Enable request/response logging
     pub enable_logging: bool,
+    /// Maximum number of requests served on a single connection
+    pub max_requests_per_connection: usize,
     /// Server shutdown timeout
     pub shutdown_timeout: Duration,
 }
@@ -59,12 +61,13 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            max_connections: 200,
-            read_timeout: Duration::from_secs(15),
-            write_timeout: Duration::from_secs(10),
+            max_connections: 128,
+            read_timeout: Duration::from_secs(5),
+            write_timeout: Duration::from_secs(5),
             max_header_size: 4096,
             max_request_size: 10 * 1024 * 1024,
             enable_logging: true,
+            max_requests_per_connection: 32,
             shutdown_timeout: Duration::from_secs(3),
         }
     }
@@ -613,6 +616,7 @@ impl IpcHttpServer {
 
         let codec = HttpIpcCodec::new(config.max_header_size, config.max_request_size);
         let mut framed = Framed::new(stream, codec);
+        let mut requests_served = 0usize;
 
         loop {
             let request_result = match timeout(config.read_timeout, framed.next()).await {
@@ -692,6 +696,15 @@ impl IpcHttpServer {
                     stats.total_errors.fetch_add(1, Ordering::Relaxed);
                     return Err(e);
                 }
+            }
+
+            requests_served += 1;
+            if requests_served >= config.max_requests_per_connection {
+                debug!(
+                    "Connection {} reached request limit ({}), closing",
+                    connection_id, config.max_requests_per_connection
+                );
+                break;
             }
         }
 

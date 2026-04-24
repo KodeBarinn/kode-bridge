@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, trace, warn};
 
 /// Configuration for connection pool
@@ -33,14 +33,14 @@ pub struct PoolConfig {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_size: 64,                         // 增加到2的幂次，更好的内存对齐
-            min_idle: 8,                          // 减少最小空闲连接
-            max_idle_time_ms: 120_000,            // 2分钟 - 进一步减少空闲时间
-            connection_timeout_ms: 3_000,         // 减少连接超时到3秒
-            retry_delay_ms: 10,                   // 减少重试延迟到10ms
-            max_retries: 2,                       // 减少重试次数到2次
-            max_concurrent_requests: 32,          // 增加并发请求限制到2的幂次
-            max_requests_per_second: Some(100.0), // 增加速率限制
+            max_size: 64,                 // 增加到2的幂次，更好的内存对齐
+            min_idle: 8,                  // 减少最小空闲连接
+            max_idle_time_ms: 120_000,    // 2分钟 - 进一步减少空闲时间
+            connection_timeout_ms: 3_000, // 减少连接超时到3秒
+            retry_delay_ms: 10,           // 减少重试延迟到10ms
+            max_retries: 2,               // 减少重试次数到2次
+            max_concurrent_requests: 32,
+            max_requests_per_second: None,
         }
     }
 }
@@ -65,18 +65,22 @@ impl PoolConfig {
 /// A pooled connection wrapper
 pub struct PooledConnection {
     inner: Option<LocalSocketStream>,
+    permit: Option<OwnedSemaphorePermit>,
     created_at: Instant,
     last_used: Instant,
+    reusable: bool,
     pool: Arc<ConnectionPoolInner>,
 }
 
 impl PooledConnection {
-    fn new(stream: LocalSocketStream, pool: Arc<ConnectionPoolInner>) -> Self {
+    fn new(stream: LocalSocketStream, permit: OwnedSemaphorePermit, pool: Arc<ConnectionPoolInner>) -> Self {
         let now = Instant::now();
         Self {
             inner: Some(stream),
+            permit: Some(permit),
             created_at: now,
             last_used: now,
+            reusable: true,
             pool,
         }
     }
@@ -89,7 +93,19 @@ impl PooledConnection {
 
     /// Take ownership of the underlying stream
     pub fn into_stream(mut self) -> Option<LocalSocketStream> {
+        self.reusable = false;
+        if let Some(permit) = self.permit.take() {
+            self.pool
+                .active_connections
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            drop(permit);
+        }
         self.inner.take()
+    }
+
+    /// Mark the connection as broken so it is not returned to the pool.
+    pub fn invalidate(&mut self) {
+        self.reusable = false;
     }
 
     /// Check if connection is still valid
@@ -111,20 +127,26 @@ impl PooledConnection {
 impl Drop for PooledConnection {
     fn drop(&mut self) {
         if let Some(stream) = self.inner.take() {
-            self.pool.return_connection(stream);
+            if let Some(permit) = self.permit.take() {
+                self.pool.return_connection(stream, permit, self.reusable);
+            }
         }
     }
+}
+
+struct IdleConnection {
+    stream: LocalSocketStream,
+    last_used: Instant,
+    permit: OwnedSemaphorePermit,
 }
 
 /// Internal pool state with PUT request optimization
 struct ConnectionPoolInner {
     name: Name<'static>,
     config: PoolConfig,
-    connections: Mutex<VecDeque<(LocalSocketStream, Instant)>>,
-    semaphore: Semaphore,
-    /// 专用于PUT请求的新连接缓存
-    fresh_connections: Mutex<VecDeque<LocalSocketStream>>,
-    /// 快速路径计数器，用于避免semaphore竞争
+    connections: Mutex<VecDeque<IdleConnection>>,
+    semaphore: Arc<Semaphore>,
+    /// Number of checked-out connections currently in use.
     active_connections: std::sync::atomic::AtomicUsize,
 }
 
@@ -132,9 +154,8 @@ impl ConnectionPoolInner {
     fn new(name: Name<'static>, config: PoolConfig) -> Self {
         Self {
             name,
-            semaphore: Semaphore::new(config.max_size),
+            semaphore: Arc::new(Semaphore::new(config.max_size)),
             connections: Mutex::new(VecDeque::new()),
-            fresh_connections: Mutex::new(VecDeque::new()),
             active_connections: std::sync::atomic::AtomicUsize::new(0),
             config,
         }
@@ -142,20 +163,10 @@ impl ConnectionPoolInner {
 
     /// Get a fresh connection for PUT requests, bypassing normal pool
     async fn get_fresh_connection(&self) -> Result<LocalSocketStream> {
-        // 首先检查是否有预备的新连接
-        {
-            let mut fresh = self.fresh_connections.lock();
-            if let Some(stream) = fresh.pop_front() {
-                return Ok(stream);
-            }
-        }
-
-        // 创建新连接，使用更短的超时和优化的参数
         let mut last_error = None;
         for attempt in 0..2 {
-            // 只重试1次，更快失败
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_millis(10)).await; // 很短的重试延迟
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
 
             match LocalSocketStream::connect(self.name.clone()).await {
@@ -170,31 +181,35 @@ impl ConnectionPoolInner {
             }
         }
 
-        // 如果新连接失败，回退到池化连接
-        match self.get_pooled_connection() {
-            Some(stream) => {
-                debug!("Falling back to pooled connection for PUT request");
-                Ok(stream)
-            }
-            None => Err(KodeBridgeError::connection(format!(
-                "Failed to get fresh connection and no pooled connections available: {}",
-                last_error
-                    .map(|e| e.to_string())
-                    .unwrap_or_else(|| "Unknown error".to_string())
-            ))),
-        }
+        Err(KodeBridgeError::connection(format!(
+            "Failed to create fresh connection: {}",
+            last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string())
+        )))
     }
 
     /// 预热新连接池，为PUT请求做准备
     async fn preheat_fresh_connections(&self, count: usize) {
         let mut successful = 0;
         for _ in 0..count {
+            let Ok(permit) = self.semaphore.clone().try_acquire_owned() else {
+                break;
+            };
+
             match LocalSocketStream::connect(self.name.clone()).await {
                 Ok(stream) => {
-                    self.fresh_connections.lock().push_back(stream);
+                    self.connections.lock().push_back(IdleConnection {
+                        stream,
+                        last_used: Instant::now(),
+                        permit,
+                    });
                     successful += 1;
                 }
-                Err(_) => break,
+                Err(_) => {
+                    drop(permit);
+                    break;
+                }
             }
         }
         if successful > 0 {
@@ -234,37 +249,42 @@ impl ConnectionPoolInner {
         )))
     }
 
-    fn get_pooled_connection(&self) -> Option<LocalSocketStream> {
+    fn get_pooled_connection(&self) -> Option<(LocalSocketStream, OwnedSemaphorePermit)> {
         let mut connections = self.connections.lock();
 
-        // Remove expired connections
         let now = Instant::now();
-        while let Some((_, created_at)) = connections.front() {
-            if now.duration_since(*created_at) > self.config.max_idle_time() {
+        while let Some(idle) = connections.front() {
+            if now.duration_since(idle.last_used) > self.config.max_idle_time() {
                 connections.pop_front();
             } else {
                 break;
             }
         }
 
-        // Get a connection if available
-        connections.pop_front().map(|(stream, _)| {
+        connections.pop_front().map(|idle| {
             trace!("Reusing pooled connection, {} remaining", connections.len());
-            stream
+            (idle.stream, idle.permit)
         })
     }
 
-    fn return_connection(&self, stream: LocalSocketStream) {
-        // 减少活跃连接计数
+    fn return_connection(&self, stream: LocalSocketStream, permit: OwnedSemaphorePermit, reusable: bool) {
         self.active_connections
             .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+
+        if !reusable {
+            trace!("Dropping broken pooled connection");
+            return;
+        }
 
         let (kept, pool_size) = {
             let mut connections = self.connections.lock();
 
-            // Only keep the connection if we haven't exceeded max_size
             if connections.len() < self.config.max_size {
-                connections.push_back((stream, Instant::now()));
+                connections.push_back(IdleConnection {
+                    stream,
+                    last_used: Instant::now(),
+                    permit,
+                });
                 (true, connections.len())
             } else {
                 (false, connections.len())
@@ -276,70 +296,6 @@ impl ConnectionPoolInner {
         } else {
             trace!("Pool full, dropping connection");
         }
-    }
-
-    async fn get_connection_with_timeout(&self) -> Result<LocalSocketStream> {
-        // 优化的获取连接逻辑，减少semaphore竞争
-
-        // 首先快速检查是否有可用的池化连接
-        if let Some(stream) = self.get_pooled_connection() {
-            return Ok(stream);
-        }
-
-        // 检查活跃连接数，避免不必要的semaphore等待
-        let active_count = self
-            .active_connections
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if active_count >= self.config.max_size {
-            // 快速失败路径，避免长时间等待
-            return Err(KodeBridgeError::custom("Connection pool exhausted"));
-        }
-
-        // 使用更短的超时来获取许可
-        let timeout = std::cmp::min(self.config.connection_timeout(), Duration::from_millis(500));
-        let permit = tokio::time::timeout(timeout, self.semaphore.acquire())
-            .await
-            .map_err(|_| KodeBridgeError::timeout(timeout.as_millis() as u64))?
-            .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
-
-        // 再次检查池化连接（避免不必要的连接创建）
-        if let Some(stream) = self.get_pooled_connection() {
-            drop(permit);
-            return Ok(stream);
-        }
-
-        // 增加活跃连接计数
-        self.active_connections
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        // 创建新连接
-        match self.create_connection().await {
-            Ok(stream) => {
-                drop(permit);
-                Ok(stream)
-            }
-            Err(e) => {
-                // 出错时减少活跃连接计数
-                self.active_connections
-                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                drop(permit);
-                Err(e)
-            }
-        }
-    }
-
-    /// Get a fresh connection optimized for PUT requests
-    async fn get_fresh_connection_with_timeout(&self) -> Result<LocalSocketStream> {
-        // 对PUT请求使用专门优化的逻辑
-        let permit = tokio::time::timeout(Duration::from_millis(100), self.semaphore.acquire())
-            .await
-            .map_err(|_| KodeBridgeError::timeout(100))?
-            .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
-
-        // Get fresh connection directly with optimized parameters
-        let stream = self.get_fresh_connection().await?;
-        drop(permit);
-        Ok(stream)
     }
 }
 
@@ -364,14 +320,54 @@ impl ConnectionPool {
 
     /// Get a connection from the pool
     pub async fn get_connection(&self) -> Result<PooledConnection> {
-        let stream = self.inner.get_connection_with_timeout().await?;
-        Ok(PooledConnection::new(stream, Arc::clone(&self.inner)))
+        if let Some((stream, permit)) = self.inner.get_pooled_connection() {
+            self.inner
+                .active_connections
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok(PooledConnection::new(stream, permit, Arc::clone(&self.inner)));
+        }
+
+        let timeout = self.inner.config.connection_timeout();
+        let permit = tokio::time::timeout(timeout, self.inner.semaphore.clone().acquire_owned())
+            .await
+            .map_err(|_| KodeBridgeError::timeout(timeout.as_millis() as u64))?
+            .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
+
+        if let Some((stream, pooled_permit)) = self.inner.get_pooled_connection() {
+            drop(permit);
+            self.inner
+                .active_connections
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok(PooledConnection::new(stream, pooled_permit, Arc::clone(&self.inner)));
+        }
+
+        match self.inner.create_connection().await {
+            Ok(stream) => {
+                self.inner
+                    .active_connections
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(PooledConnection::new(stream, permit, Arc::clone(&self.inner)))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Get a fresh connection optimized for PUT requests
     pub async fn get_fresh_connection(&self) -> Result<PooledConnection> {
-        let stream = self.inner.get_fresh_connection_with_timeout().await?;
-        Ok(PooledConnection::new(stream, Arc::clone(&self.inner)))
+        let permit = tokio::time::timeout(Duration::from_millis(100), self.inner.semaphore.clone().acquire_owned())
+            .await
+            .map_err(|_| KodeBridgeError::timeout(100))?
+            .map_err(|_| KodeBridgeError::custom("Semaphore closed"))?;
+
+        match self.inner.get_fresh_connection().await {
+            Ok(stream) => {
+                self.inner
+                    .active_connections
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(PooledConnection::new(stream, permit, Arc::clone(&self.inner)))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Preheat fresh connections for better PUT performance
@@ -410,7 +406,7 @@ impl ConnectionPool {
             .active_connections
             .load(std::sync::atomic::Ordering::Relaxed);
         PoolStats {
-            total_connections: connections.len(),
+            total_connections: connections.len() + active_count,
             available_permits: self.inner.semaphore.available_permits(),
             max_size: self.inner.config.max_size,
             active_connections: active_count,

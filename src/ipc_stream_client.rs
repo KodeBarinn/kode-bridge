@@ -201,12 +201,17 @@ impl IpcStreamClient {
         method: &str,
         path: &str,
         body: Option<&Value>,
+        headers: &[(String, String)],
         timeout: Duration,
     ) -> Result<StreamingResponse> {
         let method =
             Method::from_str(method).map_err(|e| KodeBridgeError::invalid_request(format!("Invalid method: {}", e)))?;
 
         let mut builder = RequestBuilder::new(method, path.to_string());
+
+        for (key, value) in headers {
+            builder = builder.header(key, value);
+        }
 
         if let Some(json_body) = body {
             builder = builder.json(json_body)?;
@@ -301,7 +306,13 @@ impl<'a> StreamRequestBuilder<'a> {
     pub async fn send(self) -> Result<StreamResponse> {
         let response = self
             .client
-            .send_request_internal(self.method.as_str(), &self.path, self.body.as_ref(), self.timeout)
+            .send_request_internal(
+                self.method.as_str(),
+                &self.path,
+                self.body.as_ref(),
+                &self.headers,
+                self.timeout,
+            )
             .await?;
 
         Ok(StreamResponse::new(response))
