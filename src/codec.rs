@@ -53,7 +53,7 @@ impl Decoder for HttpIpcCodec {
             }
         };
 
-        // Parse headers once so we can enforce limits without reparsing the request.
+        // Parse headers once so we can enforce limits without parsing the request again.
         let headers_len = header_end + 4; // Include \r\n\r\n
 
         let mut headers = vec![httparse::EMPTY_HEADER; 64];
