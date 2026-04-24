@@ -13,7 +13,7 @@
 <a href=#13 id=13 data-nosnippet>13</a>}
 <a href=#14 id=14 data-nosnippet>14</a>
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">impl </span>HttpIpcCodec {
-<a href=#16 id=16 data-nosnippet>16</a>    <span class="kw">pub fn </span>new(max_header_size: usize, max_request_size: usize) -&gt; <span class="self">Self </span>{
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="kw">pub const fn </span>new(max_header_size: usize, max_request_size: usize) -&gt; <span class="self">Self </span>{
 <a href=#17 id=17 data-nosnippet>17</a>        <span class="self">Self </span>{
 <a href=#18 id=18 data-nosnippet>18</a>            max_header_size,
 <a href=#19 id=19 data-nosnippet>19</a>            max_request_size,
@@ -53,136 +53,124 @@
 <a href=#53 id=53 data-nosnippet>53</a>            }
 <a href=#54 id=54 data-nosnippet>54</a>        };
 <a href=#55 id=55 data-nosnippet>55</a>
-<a href=#56 id=56 data-nosnippet>56</a>        <span class="comment">// Parse headers to get Content-Length
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="comment">// Parse headers once so we can enforce limits without reparsing the request.
 <a href=#57 id=57 data-nosnippet>57</a>        </span><span class="kw">let </span>headers_len = header_end + <span class="number">4</span>; <span class="comment">// Include \r\n\r\n
 <a href=#58 id=58 data-nosnippet>58</a>
 <a href=#59 id=59 data-nosnippet>59</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>headers = <span class="macro">vec!</span>[httparse::EMPTY_HEADER; <span class="number">64</span>];
 <a href=#60 id=60 data-nosnippet>60</a>        <span class="kw">let </span><span class="kw-2">mut </span>req = Request::new(<span class="kw-2">&amp;mut </span>headers);
 <a href=#61 id=61 data-nosnippet>61</a>
-<a href=#62 id=62 data-nosnippet>62</a>        <span class="comment">// We only parse the header part to get Content-Length
-<a href=#63 id=63 data-nosnippet>63</a>        </span><span class="kw">let </span>status = req
-<a href=#64 id=64 data-nosnippet>64</a>            .parse(<span class="kw-2">&amp;</span>src[..headers_len])
-<a href=#65 id=65 data-nosnippet>65</a>            .map_err(|e| KodeBridgeError::validation(<span class="macro">format!</span>(<span class="string">"Failed to parse HTTP request: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#66 id=66 data-nosnippet>66</a>
-<a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">match </span>status {
-<a href=#68 id=68 data-nosnippet>68</a>            Status::Complete(_body_start) =&gt; {
-<a href=#69 id=69 data-nosnippet>69</a>                <span class="comment">// Find content-length
-<a href=#70 id=70 data-nosnippet>70</a>                </span><span class="kw">let </span><span class="kw-2">mut </span>content_length = <span class="number">0</span>;
-<a href=#71 id=71 data-nosnippet>71</a>                <span class="kw">for </span>header <span class="kw">in </span>req.headers.iter() {
-<a href=#72 id=72 data-nosnippet>72</a>                    <span class="kw">if </span>header.name.eq_ignore_ascii_case(<span class="string">"Content-Length"</span>) {
-<a href=#73 id=73 data-nosnippet>73</a>                        <span class="kw">if let </span><span class="prelude-val">Ok</span>(s) = std::str::from_utf8(header.value) {
-<a href=#74 id=74 data-nosnippet>74</a>                            <span class="kw">if let </span><span class="prelude-val">Ok</span>(len) = s.parse::&lt;usize&gt;() {
-<a href=#75 id=75 data-nosnippet>75</a>                                content_length = len;
-<a href=#76 id=76 data-nosnippet>76</a>                            }
-<a href=#77 id=77 data-nosnippet>77</a>                        }
-<a href=#78 id=78 data-nosnippet>78</a>                    }
-<a href=#79 id=79 data-nosnippet>79</a>                }
+<a href=#62 id=62 data-nosnippet>62</a>        <span class="kw">let </span>status = req
+<a href=#63 id=63 data-nosnippet>63</a>            .parse(<span class="kw-2">&amp;</span>src[..headers_len])
+<a href=#64 id=64 data-nosnippet>64</a>            .map_err(|e| KodeBridgeError::validation(<span class="macro">format!</span>(<span class="string">"Failed to parse HTTP request: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#65 id=65 data-nosnippet>65</a>
+<a href=#66 id=66 data-nosnippet>66</a>        <span class="kw">match </span>status {
+<a href=#67 id=67 data-nosnippet>67</a>            Status::Complete(body_start) =&gt; {
+<a href=#68 id=68 data-nosnippet>68</a>                <span class="kw">let </span><span class="kw-2">mut </span>content_length = <span class="number">0</span>;
+<a href=#69 id=69 data-nosnippet>69</a>                <span class="kw">for </span>header <span class="kw">in </span>req.headers.iter() {
+<a href=#70 id=70 data-nosnippet>70</a>                    <span class="kw">if </span>header.name.eq_ignore_ascii_case(<span class="string">"Content-Length"</span>) {
+<a href=#71 id=71 data-nosnippet>71</a>                        <span class="kw">if let </span><span class="prelude-val">Ok</span>(s) = std::str::from_utf8(header.value) {
+<a href=#72 id=72 data-nosnippet>72</a>                            <span class="kw">if let </span><span class="prelude-val">Ok</span>(len) = s.parse::&lt;usize&gt;() {
+<a href=#73 id=73 data-nosnippet>73</a>                                content_length = len;
+<a href=#74 id=74 data-nosnippet>74</a>                            }
+<a href=#75 id=75 data-nosnippet>75</a>                        }
+<a href=#76 id=76 data-nosnippet>76</a>                    }
+<a href=#77 id=77 data-nosnippet>77</a>                }
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a>                <span class="kw">let </span>total_len = headers_len + content_length;
 <a href=#80 id=80 data-nosnippet>80</a>
-<a href=#81 id=81 data-nosnippet>81</a>                <span class="kw">let </span>total_len = headers_len + content_length;
-<a href=#82 id=82 data-nosnippet>82</a>
-<a href=#83 id=83 data-nosnippet>83</a>                <span class="kw">if </span>total_len &gt; <span class="self">self</span>.max_request_size {
-<a href=#84 id=84 data-nosnippet>84</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(KodeBridgeError::validation(<span class="string">"Request size exceeds maximum allowed"</span>));
-<a href=#85 id=85 data-nosnippet>85</a>                }
-<a href=#86 id=86 data-nosnippet>86</a>
-<a href=#87 id=87 data-nosnippet>87</a>                <span class="kw">if </span>src.len() &lt; total_len {
-<a href=#88 id=88 data-nosnippet>88</a>                    <span class="comment">// Reserve space for the rest of the body
-<a href=#89 id=89 data-nosnippet>89</a>                    </span>src.reserve(total_len - src.len());
-<a href=#90 id=90 data-nosnippet>90</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#91 id=91 data-nosnippet>91</a>                }
-<a href=#92 id=92 data-nosnippet>92</a>
-<a href=#93 id=93 data-nosnippet>93</a>                <span class="comment">// We have the full request. Split the buffer.
-<a href=#94 id=94 data-nosnippet>94</a>                </span><span class="kw">let </span>data = src.split_to(total_len);
+<a href=#81 id=81 data-nosnippet>81</a>                <span class="kw">if </span>total_len &gt; <span class="self">self</span>.max_request_size {
+<a href=#82 id=82 data-nosnippet>82</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(KodeBridgeError::validation(<span class="string">"Request size exceeds maximum allowed"</span>));
+<a href=#83 id=83 data-nosnippet>83</a>                }
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a>                <span class="kw">if </span>src.len() &lt; total_len {
+<a href=#86 id=86 data-nosnippet>86</a>                    src.reserve(total_len - src.len());
+<a href=#87 id=87 data-nosnippet>87</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#88 id=88 data-nosnippet>88</a>                }
+<a href=#89 id=89 data-nosnippet>89</a>
+<a href=#90 id=90 data-nosnippet>90</a>                <span class="kw">let </span>method = req
+<a href=#91 id=91 data-nosnippet>91</a>                    .method
+<a href=#92 id=92 data-nosnippet>92</a>                    .ok_or_else(|| KodeBridgeError::validation(<span class="string">"Missing HTTP method"</span>))<span class="question-mark">?</span>;
+<a href=#93 id=93 data-nosnippet>93</a>                <span class="kw">let </span>method = Method::from_bytes(method.as_bytes())
+<a href=#94 id=94 data-nosnippet>94</a>                    .map_err(|e| KodeBridgeError::validation(<span class="macro">format!</span>(<span class="string">"Invalid HTTP method: {}"</span>, e)))<span class="question-mark">?</span>;
 <a href=#95 id=95 data-nosnippet>95</a>
-<a href=#96 id=96 data-nosnippet>96</a>                <span class="comment">// Re-parse the full request to extract fields
-<a href=#97 id=97 data-nosnippet>97</a>                // We need new headers array because the previous one was for the slice
-<a href=#98 id=98 data-nosnippet>98</a>                </span><span class="kw">let </span><span class="kw-2">mut </span>headers = <span class="macro">vec!</span>[httparse::EMPTY_HEADER; <span class="number">64</span>];
-<a href=#99 id=99 data-nosnippet>99</a>                <span class="kw">let </span><span class="kw-2">mut </span>req = Request::new(<span class="kw-2">&amp;mut </span>headers);
-<a href=#100 id=100 data-nosnippet>100</a>                <span class="kw">let </span>status = req.parse(<span class="kw-2">&amp;</span>data)<span class="question-mark">?</span>;
-<a href=#101 id=101 data-nosnippet>101</a>                <span class="attr">#[allow(clippy::unwrap_used)]
-<a href=#102 id=102 data-nosnippet>102</a>                </span><span class="kw">let </span>body_start = status.unwrap();
-<a href=#103 id=103 data-nosnippet>103</a>
-<a href=#104 id=104 data-nosnippet>104</a>                <span class="kw">let </span>method = req
-<a href=#105 id=105 data-nosnippet>105</a>                    .method
-<a href=#106 id=106 data-nosnippet>106</a>                    .ok_or_else(|| KodeBridgeError::validation(<span class="string">"Missing HTTP method"</span>))<span class="question-mark">?</span>;
-<a href=#107 id=107 data-nosnippet>107</a>                <span class="kw">let </span>method = Method::from_bytes(method.as_bytes())
-<a href=#108 id=108 data-nosnippet>108</a>                    .map_err(|e| KodeBridgeError::validation(<span class="macro">format!</span>(<span class="string">"Invalid HTTP method: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#109 id=109 data-nosnippet>109</a>
-<a href=#110 id=110 data-nosnippet>110</a>                <span class="kw">let </span>path = req
-<a href=#111 id=111 data-nosnippet>111</a>                    .path
-<a href=#112 id=112 data-nosnippet>112</a>                    .ok_or_else(|| KodeBridgeError::validation(<span class="string">"Missing HTTP path"</span>))<span class="question-mark">?</span>;
-<a href=#113 id=113 data-nosnippet>113</a>                <span class="kw">let </span>uri = path
-<a href=#114 id=114 data-nosnippet>114</a>                    .parse::&lt;Uri&gt;()
-<a href=#115 id=115 data-nosnippet>115</a>                    .map_err(|e| KodeBridgeError::validation(<span class="macro">format!</span>(<span class="string">"Invalid URI: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#116 id=116 data-nosnippet>116</a>
-<a href=#117 id=117 data-nosnippet>117</a>                <span class="kw">let </span><span class="kw-2">mut </span>header_map = HeaderMap::new();
-<a href=#118 id=118 data-nosnippet>118</a>                <span class="kw">for </span>header <span class="kw">in </span>req.headers {
-<a href=#119 id=119 data-nosnippet>119</a>                    <span class="kw">if let </span>(<span class="prelude-val">Ok</span>(name), <span class="prelude-val">Ok</span>(value)) = (
-<a href=#120 id=120 data-nosnippet>120</a>                        header.name.parse::&lt;http::header::HeaderName&gt;(),
-<a href=#121 id=121 data-nosnippet>121</a>                        http::header::HeaderValue::from_bytes(header.value),
-<a href=#122 id=122 data-nosnippet>122</a>                    ) {
-<a href=#123 id=123 data-nosnippet>123</a>                        header_map.insert(name, value);
-<a href=#124 id=124 data-nosnippet>124</a>                    }
-<a href=#125 id=125 data-nosnippet>125</a>                }
-<a href=#126 id=126 data-nosnippet>126</a>
-<a href=#127 id=127 data-nosnippet>127</a>                <span class="kw">let </span>bytes = data.freeze();
-<a href=#128 id=128 data-nosnippet>128</a>                <span class="kw">let </span>body = bytes.slice(body_start..);
+<a href=#96 id=96 data-nosnippet>96</a>                <span class="kw">let </span>path = req
+<a href=#97 id=97 data-nosnippet>97</a>                    .path
+<a href=#98 id=98 data-nosnippet>98</a>                    .ok_or_else(|| KodeBridgeError::validation(<span class="string">"Missing HTTP path"</span>))<span class="question-mark">?</span>;
+<a href=#99 id=99 data-nosnippet>99</a>                <span class="kw">let </span>uri = path
+<a href=#100 id=100 data-nosnippet>100</a>                    .parse::&lt;Uri&gt;()
+<a href=#101 id=101 data-nosnippet>101</a>                    .map_err(|e| KodeBridgeError::validation(<span class="macro">format!</span>(<span class="string">"Invalid URI: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#102 id=102 data-nosnippet>102</a>
+<a href=#103 id=103 data-nosnippet>103</a>                <span class="kw">let </span><span class="kw-2">mut </span>header_map = HeaderMap::new();
+<a href=#104 id=104 data-nosnippet>104</a>                <span class="kw">for </span>header <span class="kw">in </span>req.headers {
+<a href=#105 id=105 data-nosnippet>105</a>                    <span class="kw">if let </span>(<span class="prelude-val">Ok</span>(name), <span class="prelude-val">Ok</span>(value)) = (
+<a href=#106 id=106 data-nosnippet>106</a>                        header.name.parse::&lt;http::header::HeaderName&gt;(),
+<a href=#107 id=107 data-nosnippet>107</a>                        http::header::HeaderValue::from_bytes(header.value),
+<a href=#108 id=108 data-nosnippet>108</a>                    ) {
+<a href=#109 id=109 data-nosnippet>109</a>                        header_map.insert(name, value);
+<a href=#110 id=110 data-nosnippet>110</a>                    }
+<a href=#111 id=111 data-nosnippet>111</a>                }
+<a href=#112 id=112 data-nosnippet>112</a>
+<a href=#113 id=113 data-nosnippet>113</a>                <span class="comment">// We have the full request. Split the buffer only after extracting owned metadata.
+<a href=#114 id=114 data-nosnippet>114</a>                </span><span class="kw">let </span>data = src.split_to(total_len);
+<a href=#115 id=115 data-nosnippet>115</a>                <span class="kw">let </span>bytes = data.freeze();
+<a href=#116 id=116 data-nosnippet>116</a>                <span class="kw">let </span>body = bytes.slice(body_start..);
+<a href=#117 id=117 data-nosnippet>117</a>
+<a href=#118 id=118 data-nosnippet>118</a>                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(ParsedRequest {
+<a href=#119 id=119 data-nosnippet>119</a>                    method,
+<a href=#120 id=120 data-nosnippet>120</a>                    uri,
+<a href=#121 id=121 data-nosnippet>121</a>                    headers: header_map,
+<a href=#122 id=122 data-nosnippet>122</a>                    body,
+<a href=#123 id=123 data-nosnippet>123</a>                }))
+<a href=#124 id=124 data-nosnippet>124</a>            }
+<a href=#125 id=125 data-nosnippet>125</a>            Status::Partial =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
+<a href=#126 id=126 data-nosnippet>126</a>        }
+<a href=#127 id=127 data-nosnippet>127</a>    }
+<a href=#128 id=128 data-nosnippet>128</a>}
 <a href=#129 id=129 data-nosnippet>129</a>
-<a href=#130 id=130 data-nosnippet>130</a>                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(ParsedRequest {
-<a href=#131 id=131 data-nosnippet>131</a>                    method,
-<a href=#132 id=132 data-nosnippet>132</a>                    uri,
-<a href=#133 id=133 data-nosnippet>133</a>                    headers: header_map,
-<a href=#134 id=134 data-nosnippet>134</a>                    body,
-<a href=#135 id=135 data-nosnippet>135</a>                }))
-<a href=#136 id=136 data-nosnippet>136</a>            }
-<a href=#137 id=137 data-nosnippet>137</a>            Status::Partial =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
-<a href=#138 id=138 data-nosnippet>138</a>        }
-<a href=#139 id=139 data-nosnippet>139</a>    }
-<a href=#140 id=140 data-nosnippet>140</a>}
-<a href=#141 id=141 data-nosnippet>141</a>
-<a href=#142 id=142 data-nosnippet>142</a><span class="kw">impl </span>Encoder&lt;HttpResponse&gt; <span class="kw">for </span>HttpIpcCodec {
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">type </span>Error = KodeBridgeError;
-<a href=#144 id=144 data-nosnippet>144</a>
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">fn </span>encode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: HttpResponse, dst: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#146 id=146 data-nosnippet>146</a>        dst.reserve(<span class="number">256 </span>+ item.body.len());
-<a href=#147 id=147 data-nosnippet>147</a>
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">let </span>status = item.status;
-<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">let </span>reason = status.canonical_reason().unwrap_or(<span class="string">"Unknown"</span>);
-<a href=#150 id=150 data-nosnippet>150</a>
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span><span class="kw-2">mut </span>writer = dst.writer();
-<a href=#152 id=152 data-nosnippet>152</a>        <span class="macro">write!</span>(writer, <span class="string">"HTTP/1.1 {} {}\r\n"</span>, status.as_u16(), reason)
-<a href=#153 id=153 data-nosnippet>153</a>            .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write response status: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#154 id=154 data-nosnippet>154</a>
-<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span><span class="kw-2">mut </span>has_content_length = <span class="bool-val">false</span>;
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">for </span>(key, value) <span class="kw">in </span>item.headers.iter() {
-<a href=#157 id=157 data-nosnippet>157</a>            <span class="macro">write!</span>(writer, <span class="string">"{}: "</span>, key.as_str())
-<a href=#158 id=158 data-nosnippet>158</a>                .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write header key: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#159 id=159 data-nosnippet>159</a>            writer
-<a href=#160 id=160 data-nosnippet>160</a>                .write_all(value.as_bytes())
-<a href=#161 id=161 data-nosnippet>161</a>                .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write header value: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#162 id=162 data-nosnippet>162</a>            writer
-<a href=#163 id=163 data-nosnippet>163</a>                .write_all(<span class="string">b"\r\n"</span>)
-<a href=#164 id=164 data-nosnippet>164</a>                .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write CRLF: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#165 id=165 data-nosnippet>165</a>
-<a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">if </span>key.as_str().eq_ignore_ascii_case(<span class="string">"content-length"</span>) {
-<a href=#167 id=167 data-nosnippet>167</a>                has_content_length = <span class="bool-val">true</span>;
-<a href=#168 id=168 data-nosnippet>168</a>            }
-<a href=#169 id=169 data-nosnippet>169</a>        }
-<a href=#170 id=170 data-nosnippet>170</a>
-<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">if </span>!has_content_length {
-<a href=#172 id=172 data-nosnippet>172</a>            <span class="macro">write!</span>(writer, <span class="string">"Content-Length: {}\r\n"</span>, item.body.len())
-<a href=#173 id=173 data-nosnippet>173</a>                .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write Content-Length: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#174 id=174 data-nosnippet>174</a>        }
-<a href=#175 id=175 data-nosnippet>175</a>
-<a href=#176 id=176 data-nosnippet>176</a>        writer
-<a href=#177 id=177 data-nosnippet>177</a>            .write_all(<span class="string">b"\r\n"</span>)
-<a href=#178 id=178 data-nosnippet>178</a>            .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write header end: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#179 id=179 data-nosnippet>179</a>        writer
-<a href=#180 id=180 data-nosnippet>180</a>            .write_all(item.body.as_ref())
-<a href=#181 id=181 data-nosnippet>181</a>            .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write body: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#182 id=182 data-nosnippet>182</a>        writer
-<a href=#183 id=183 data-nosnippet>183</a>            .flush()
-<a href=#184 id=184 data-nosnippet>184</a>            .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to flush: {}"</span>, e)))<span class="question-mark">?</span>;
-<a href=#185 id=185 data-nosnippet>185</a>
-<a href=#186 id=186 data-nosnippet>186</a>        <span class="prelude-val">Ok</span>(())
-<a href=#187 id=187 data-nosnippet>187</a>    }
-<a href=#188 id=188 data-nosnippet>188</a>}</code></pre></div></section></main></body></html>
+<a href=#130 id=130 data-nosnippet>130</a><span class="kw">impl </span>Encoder&lt;HttpResponse&gt; <span class="kw">for </span>HttpIpcCodec {
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">type </span>Error = KodeBridgeError;
+<a href=#132 id=132 data-nosnippet>132</a>
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">fn </span>encode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: HttpResponse, dst: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#134 id=134 data-nosnippet>134</a>        dst.reserve(<span class="number">256 </span>+ item.body.len());
+<a href=#135 id=135 data-nosnippet>135</a>
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span>status = item.status;
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>reason = status.canonical_reason().unwrap_or(<span class="string">"Unknown"</span>);
+<a href=#138 id=138 data-nosnippet>138</a>
+<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span><span class="kw-2">mut </span>writer = dst.writer();
+<a href=#140 id=140 data-nosnippet>140</a>        <span class="macro">write!</span>(writer, <span class="string">"HTTP/1.1 {} {}\r\n"</span>, status.as_u16(), reason)
+<a href=#141 id=141 data-nosnippet>141</a>            .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write response status: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#142 id=142 data-nosnippet>142</a>
+<a href=#143 id=143 data-nosnippet>143</a>        <span class="kw">let </span><span class="kw-2">mut </span>has_content_length = <span class="bool-val">false</span>;
+<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">for </span>(key, value) <span class="kw">in </span>item.headers.iter() {
+<a href=#145 id=145 data-nosnippet>145</a>            <span class="macro">write!</span>(writer, <span class="string">"{}: "</span>, key.as_str())
+<a href=#146 id=146 data-nosnippet>146</a>                .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write header key: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#147 id=147 data-nosnippet>147</a>            writer
+<a href=#148 id=148 data-nosnippet>148</a>                .write_all(value.as_bytes())
+<a href=#149 id=149 data-nosnippet>149</a>                .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write header value: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#150 id=150 data-nosnippet>150</a>            writer
+<a href=#151 id=151 data-nosnippet>151</a>                .write_all(<span class="string">b"\r\n"</span>)
+<a href=#152 id=152 data-nosnippet>152</a>                .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write CRLF: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#153 id=153 data-nosnippet>153</a>
+<a href=#154 id=154 data-nosnippet>154</a>            <span class="kw">if </span>key.as_str().eq_ignore_ascii_case(<span class="string">"content-length"</span>) {
+<a href=#155 id=155 data-nosnippet>155</a>                has_content_length = <span class="bool-val">true</span>;
+<a href=#156 id=156 data-nosnippet>156</a>            }
+<a href=#157 id=157 data-nosnippet>157</a>        }
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">if </span>!has_content_length {
+<a href=#160 id=160 data-nosnippet>160</a>            <span class="macro">write!</span>(writer, <span class="string">"Content-Length: {}\r\n"</span>, item.body.len())
+<a href=#161 id=161 data-nosnippet>161</a>                .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write Content-Length: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#162 id=162 data-nosnippet>162</a>        }
+<a href=#163 id=163 data-nosnippet>163</a>
+<a href=#164 id=164 data-nosnippet>164</a>        writer
+<a href=#165 id=165 data-nosnippet>165</a>            .write_all(<span class="string">b"\r\n"</span>)
+<a href=#166 id=166 data-nosnippet>166</a>            .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write header end: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#167 id=167 data-nosnippet>167</a>        writer
+<a href=#168 id=168 data-nosnippet>168</a>            .write_all(item.body.as_ref())
+<a href=#169 id=169 data-nosnippet>169</a>            .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to write body: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#170 id=170 data-nosnippet>170</a>        writer
+<a href=#171 id=171 data-nosnippet>171</a>            .flush()
+<a href=#172 id=172 data-nosnippet>172</a>            .map_err(|e| KodeBridgeError::connection(<span class="macro">format!</span>(<span class="string">"Failed to flush: {}"</span>, e)))<span class="question-mark">?</span>;
+<a href=#173 id=173 data-nosnippet>173</a>
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="prelude-val">Ok</span>(())
+<a href=#175 id=175 data-nosnippet>175</a>    }
+<a href=#176 id=176 data-nosnippet>176</a>}</code></pre></div></section></main></body></html>
