@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-24
+
+### Performance
+
+- Improve IPC HTTP connection reuse by keeping pool permits attached to idle connections and reusing them when a pooled stream is checked out again.
+- Reduce per-request work for PUT-heavy paths by allowing pre-serialized JSON bodies to be sent directly and by reusing those serialized bodies in batched PUT requests.
+- Expand the benchmark suite to cover request construction, in-memory duplex roundtrips, server-side request pipeline handling, and batch request preparation.
+
+### Changed
+
+- Tighten default IPC server settings by reducing default connection limits and shortening the default read/write timeouts for both HTTP and stream servers.
+- Add `max_requests_per_connection` to `ServerConfig` and close HTTP connections after the configured number of served requests to avoid overly long-lived sessions.
+- Update the stream client request path so custom headers are forwarded consistently through the streaming request builder.
+- Switch Criterion async benchmarking to Tokio and require the `full` feature set for the benchmark target.
+
+### Fixed
+
+- Invalidate broken pooled HTTP connections on request failures so they are dropped instead of being returned to the pool for reuse.
+- Correct pool statistics reporting so total connection counts include both idle and checked-out connections.
+- Clean up example client lifetimes and release timing so example binaries satisfy stricter Clippy checks around significant drops.
+- Resolve documentation spell-check issues in source comments and changelog text.
+
 ## [0.3.7] - 2026-04-23
 
 ### Fixed
