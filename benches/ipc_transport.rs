@@ -61,7 +61,7 @@ impl BenchContext {
                 max_request_size: 2 * 1024 * 1024,
                 max_header_size: 16 * 1024,
                 enable_logging: false,
-                max_requests_per_connection: 100_000,
+                max_requests_per_connection: usize::MAX,
                 shutdown_timeout: Duration::from_secs(1),
             },
         ) {

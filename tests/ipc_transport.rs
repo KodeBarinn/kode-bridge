@@ -540,6 +540,7 @@ impl StreamSource for ReadySource {
 }
 
 struct StreamServerGuard {
+    #[cfg(unix)]
     endpoint: PathBuf,
     task: Option<JoinHandle<Result<()>>>,
 }
@@ -567,6 +568,7 @@ impl StreamServerGuard {
         });
         timeout(STARTUP_TIMEOUT, ready_rx).await??;
         Ok(Self {
+            #[cfg(unix)]
             endpoint,
             task: Some(task),
         })

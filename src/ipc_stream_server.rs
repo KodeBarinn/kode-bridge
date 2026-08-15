@@ -434,8 +434,14 @@ impl IpcStreamServer {
     /// Will panic if the SDDL string is invalid or cannot be parsed.
     ///
     /// # Example
-    /// ```rust
-    /// server = server.with_listener_security_descriptor("D:(A;;GA;;;WD)"); // Allow Everyone access
+    /// ```no_run
+    /// use kode_bridge::{IpcStreamServer, Result};
+    ///
+    /// # fn main() -> Result<()> {
+    /// let server = IpcStreamServer::new(r"\\.\pipe\kode-bridge-stream")?;
+    /// let _server = server.with_listener_security_descriptor("D:(A;;GA;;;WD)");
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Reference
