@@ -73,7 +73,6 @@ impl BenchContext {
         let direct_client = build_client(&endpoint, false);
         runtime.block_on(wait_until_ready(&endpoint, &server_task));
         let pooled_client = build_client(&endpoint, true);
-        runtime.block_on(pooled_client.preheat_for_puts(BURST_SIZE));
 
         Self {
             runtime,
@@ -190,6 +189,10 @@ fn bench_connection_costs(c: &mut Criterion, context: &BenchContext) {
             assert!(response.is_success());
         });
     });
+
+    context
+        .runtime
+        .block_on(context.pooled_client.preheat_for_puts(BURST_SIZE));
 
     group.bench_function("warm_pooled_get", |bencher| {
         bencher.to_async(&context.runtime).iter(|| async {
