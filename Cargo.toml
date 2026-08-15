@@ -99,6 +99,12 @@ path = "benches/bench_version.rs"
 harness = false
 required-features = ["full"]
 
+[[bench]]
+name = "ipc_transport"
+path = "benches/ipc_transport.rs"
+harness = false
+required-features = ["full"]
+
 [lints.clippy]
 correctness = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
