@@ -1,9 +1,9 @@
 (function() {
-    var implementors = Object.fromEntries([["kode_bridge",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.87.0/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"struct\" href=\"kode_bridge/parser_cache/struct.CacheKey.html\" title=\"struct kode_bridge::parser_cache::CacheKey\">CacheKey</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.87.0/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"struct\" href=\"kode_bridge/struct.Endpoint.html\" title=\"struct kode_bridge::Endpoint\">Endpoint</a>"]]]]);
+    var implementors = Object.fromEntries([["kode_bridge",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.87.0/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"struct\" href=\"kode_bridge/ipc_http_server/struct.PeerCredentials.html\" title=\"struct kode_bridge::ipc_http_server::PeerCredentials\">PeerCredentials</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.87.0/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"struct\" href=\"kode_bridge/parser_cache/struct.CacheKey.html\" title=\"struct kode_bridge::parser_cache::CacheKey\">CacheKey</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.87.0/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"struct\" href=\"kode_bridge/struct.Endpoint.html\" title=\"struct kode_bridge::Endpoint\">Endpoint</a>"]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":57,"fragment_lengths":[540]}
+//{"start":57,"fragment_lengths":[842]}
