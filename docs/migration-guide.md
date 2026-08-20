@@ -69,7 +69,7 @@ let endpoint = r"\\.\pipe\service";
 The convenience builders retain their 0.4 call shape:
 
 ```rust
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 let server = IpcHttpServer::new("/tmp/service.sock")?
     .with_listener_mode(0o640);
 
@@ -96,8 +96,10 @@ Important behavior:
 - Overwrite refuses regular files and listeners that still accept connections.
 - Unix compare-and-delete cannot be made atomic with the safe standard-library
   APIs used here. Put production sockets in a trusted parent directory.
-- Custom Unix mode is applied before listening on supported Unix platforms.
-  It currently returns `Unsupported` on macOS.
+- Custom Unix mode is applied after bind and before listen on Linux and macOS.
+- HTTP request handlers receive the accepted connection's kernel-reported Unix
+  UID/GID through `RequestContext::client_info.peer_credentials`. Connections
+  are rejected if those credentials cannot be read.
 - Windows named pipes reject remote clients. A configured SDDL descriptor is
   applied to every pipe instance.
 - Invalid Windows SDDL retains the 0.4 builder behavior and panics during
@@ -111,6 +113,32 @@ Important behavior:
 - Unix listener cleanup and explicit stale-path policy
 - Windows pipe-busy retry, 512-byte pipe buffers, and flush-on-drop delivery
 - HTTP-style streaming client parsing and newline-delimited stream-server frames
+
+## Identity hooks restored in 0.5.1
+
+The `0.5.1` release restores the identity hooks used by privileged services:
+
+```rust
+let config = kode_bridge::ClientConfig {
+    require_windows_server_system: false,
+    #[cfg(windows)]
+    windows_server_pid_verifier: Some(verify_registered_service_pid),
+    ..Default::default()
+};
+```
+
+On Windows the verifier receives the PID reported by the newly opened named
+pipe handle. It runs once for each physical connection before that connection
+is returned to the caller or pool. Pool reuse does not repeat verification;
+discarding and reconnecting does. `require_windows_server_system` applies the
+library's LocalSystem token check and can be used independently of a custom
+verifier.
+
+This restoration changes complete public struct literals. `ClientConfig`
+literals must include `require_windows_server_system` and, on Windows,
+`windows_server_pid_verifier`, or use `..Default::default()`. `ClientInfo`
+literals must include `peer_credentials: PeerCredentials::default()` when no
+kernel identity is available (for example, in unit-test fixtures).
 
 `IpcStreamClient` and `IpcStreamServer` are not a matched pair in 0.5:
 `IpcStreamClient` consumes an HTTP-style streaming response, while

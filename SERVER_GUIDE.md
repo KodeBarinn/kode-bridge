@@ -179,14 +179,15 @@ initialized, but `serve(&mut self)` holds the mutable server borrow. Version
 ### Unix
 
 ```rust
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 let server = IpcHttpServer::new("/run/my-app/service.sock")?
     .with_listener_mode(0o660);
 ```
 
 The default listener removes its own socket path when dropped. It does not
 overwrite a stale path unless `ListenerOptions::try_overwrite(true)` is set.
-Use a trusted parent directory. Custom mode is currently unsupported on macOS.
+Use a trusted parent directory. Custom mode is applied after bind and before
+listen on Linux and macOS.
 
 ### Windows
 

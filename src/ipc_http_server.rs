@@ -5,6 +5,8 @@
 
 use crate::codec::HttpIpcCodec;
 use crate::errors::{KodeBridgeError, Result};
+#[cfg(unix)]
+use crate::transport;
 use crate::transport::{Endpoint, Listener, ListenerOptions, ServerStream};
 use bytes::Bytes;
 use futures::{SinkExt as _, StreamExt as _};
@@ -120,6 +122,17 @@ pub struct ClientInfo {
     pub connection_id: u64,
     /// Connection establishment time
     pub connected_at: Instant,
+    /// Kernel-reported credentials for the connected peer.
+    pub peer_credentials: PeerCredentials,
+}
+
+/// Stable subset of platform peer credentials exposed to request handlers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PeerCredentials {
+    /// Effective Unix user ID. Unavailable on Windows.
+    pub uid: Option<u32>,
+    /// Effective Unix group ID. Unavailable on Windows.
+    pub gid: Option<u32>,
 }
 
 /// Response builder for HTTP responses
@@ -524,6 +537,20 @@ impl IpcHttpServer {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok(stream) => {
+                            #[cfg(unix)]
+                            let peer_credentials = match transport::peer_credentials(&stream) {
+                                Ok((uid, gid)) => PeerCredentials {
+                                    uid: Some(uid),
+                                    gid: Some(gid),
+                                },
+                                Err(error) => {
+                                    drop(permit);
+                                    warn!("Rejected connection without peer credentials: {}", error);
+                                    continue;
+                                }
+                            };
+                            #[cfg(windows)]
+                            let peer_credentials = PeerCredentials::default();
                             let connection_id = self.stats.total_connections.fetch_add(1, Ordering::Relaxed) + 1;
                             self.stats.active_connections.fetch_add(1, Ordering::Relaxed);
 
@@ -535,6 +562,7 @@ impl IpcHttpServer {
                                 if let Err(e) = Self::handle_connection(
                                     stream,
                                     connection_id,
+                                    peer_credentials,
                                     router,
                                     config,
                                     Arc::clone(&stats),
@@ -585,6 +613,7 @@ impl IpcHttpServer {
     async fn handle_connection(
         stream: ServerStream,
         connection_id: u64,
+        peer_credentials: PeerCredentials,
         router: Arc<Router>,
         config: ServerConfig,
         stats: Arc<SharedStats>,
@@ -594,6 +623,7 @@ impl IpcHttpServer {
         let client_info = ClientInfo {
             connection_id,
             connected_at: Instant::now(),
+            peer_credentials,
         };
 
         let codec = HttpIpcCodec::new(config.max_header_size, config.max_request_size);
@@ -761,6 +791,7 @@ mod tests {
             client_info: ClientInfo {
                 connection_id: 1,
                 connected_at: Instant::now(),
+                peer_credentials: PeerCredentials::default(),
             },
             timestamp: Instant::now(),
             path_params: HashMap::new(),
@@ -870,6 +901,7 @@ mod tests {
             client_info: ClientInfo {
                 connection_id: 1,
                 connected_at: Instant::now(),
+                peer_credentials: PeerCredentials::default(),
             },
             timestamp: Instant::now(),
             path_params: HashMap::new(),
@@ -913,6 +945,7 @@ mod tests {
             client_info: ClientInfo {
                 connection_id: 1,
                 connected_at: Instant::now(),
+                peer_credentials: PeerCredentials::default(),
             },
             timestamp: Instant::now(),
             path_params: HashMap::new(),

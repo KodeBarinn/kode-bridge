@@ -2,7 +2,7 @@
 
 use kode_bridge::{
     pool::{ConnectionPool, PoolConfig, PooledConnection},
-    Endpoint, IpcHttpServer, IpcStream, IpcStreamServer, ListenerOptions,
+    ClientInfo, Endpoint, IpcHttpServer, IpcStream, IpcStreamServer, ListenerOptions, PeerCredentials,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -34,5 +34,23 @@ fn migration_api_contract_compiles() -> kode_bridge::Result<()> {
     let _default_pool = ConnectionPool::with_default_config(endpoint);
     let _pooled_api: fn(PooledConnection) = pooled_stream_signatures;
     assert_async_io::<IpcStream>();
+
+    let unavailable = PeerCredentials::default();
+    assert_eq!(unavailable.uid, None);
+    assert_eq!(unavailable.gid, None);
+    let _client_info = ClientInfo {
+        connection_id: 1,
+        connected_at: std::time::Instant::now(),
+        peer_credentials: unavailable,
+    };
+    #[cfg(feature = "client")]
+    {
+        let config = kode_bridge::ClientConfig::default();
+        assert!(!config.require_windows_server_system);
+        #[cfg(windows)]
+        {
+            let _verifier: Option<fn(u32) -> std::io::Result<()>> = config.windows_server_pid_verifier;
+        }
+    }
     Ok(())
 }

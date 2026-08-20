@@ -1,5 +1,6 @@
 #[cfg(feature = "server")]
 use super::ListenerOptions;
+use super::WindowsServerVerification;
 use std::ffi::{c_void, OsStr};
 use std::fmt;
 use std::fs::File;
@@ -8,7 +9,7 @@ use std::iter;
 #[cfg(feature = "server")]
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt as _;
-use std::os::windows::io::AsHandle;
+use std::os::windows::io::{AsHandle, AsRawHandle as _, FromRawHandle as _, OwnedHandle};
 use std::path::Path;
 use std::pin::Pin;
 use std::ptr::NonNull;
@@ -29,6 +30,12 @@ use windows_sys::Win32::Security::Authorization::{
 };
 #[cfg(feature = "server")]
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+use windows_sys::Win32::Security::{
+    CreateWellKnownSid, EqualSid, GetTokenInformation, TokenUser, WinLocalSystemSid, SECURITY_MAX_SID_SIZE,
+    TOKEN_QUERY, TOKEN_USER,
+};
+use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
+use windows_sys::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
 
 pub(super) type ClientStream = PipeStream<NamedPipeClient>;
 #[cfg(feature = "server")]
@@ -269,15 +276,112 @@ pub(super) fn validate_endpoint(path: &Path) -> io::Result<()> {
 }
 
 pub(super) async fn connect(path: &Path) -> io::Result<ClientStream> {
+    connect_with_server_verification(path, WindowsServerVerification::default()).await
+}
+
+pub(super) async fn connect_with_server_verification(
+    path: &Path,
+    verification: WindowsServerVerification,
+) -> io::Result<ClientStream> {
     loop {
         match ClientOptions::new().open(path) {
-            Ok(client) => return Ok(PipeStream::new(client)),
+            Ok(client) => {
+                verify_server(&client, verification)?;
+                return Ok(PipeStream::new(client));
+            }
             Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
             Err(error) => return Err(error),
         }
     }
+}
+
+fn verify_server(client: &NamedPipeClient, verification: WindowsServerVerification) -> io::Result<()> {
+    if !verification.require_system && verification.verifier.is_none() {
+        return Ok(());
+    }
+
+    let process_id = pipe_server_process_id(client)?;
+    if verification.require_system {
+        verify_process_is_local_system(process_id)?;
+    }
+    if let Some(verifier) = verification.verifier {
+        verifier(process_id)?;
+    }
+    Ok(())
+}
+
+fn pipe_server_process_id(client: &NamedPipeClient) -> io::Result<u32> {
+    let mut process_id = 0_u32;
+    if unsafe { GetNamedPipeServerProcessId(client.as_raw_handle(), &mut process_id) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if process_id == 0 {
+        return Err(io::Error::other(
+            "Windows named-pipe server returned an invalid process ID",
+        ));
+    }
+    Ok(process_id)
+}
+
+fn verify_process_is_local_system(process_id: u32) -> io::Result<()> {
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if process.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let process = unsafe { OwnedHandle::from_raw_handle(process) };
+
+    let mut token = std::ptr::null_mut();
+    if unsafe { OpenProcessToken(process.as_raw_handle(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let token = unsafe { OwnedHandle::from_raw_handle(token) };
+
+    let mut required = 0_u32;
+    unsafe {
+        GetTokenInformation(token.as_raw_handle(), TokenUser, std::ptr::null_mut(), 0, &mut required);
+    }
+    if required == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let words = (required as usize).div_ceil(std::mem::size_of::<usize>());
+    let mut user = vec![0_usize; words];
+    if unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenUser,
+            user.as_mut_ptr().cast(),
+            required,
+            &mut required,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+
+    let sid_words = (SECURITY_MAX_SID_SIZE as usize).div_ceil(std::mem::size_of::<usize>());
+    let mut system_sid = vec![0_usize; sid_words];
+    let mut system_sid_size = SECURITY_MAX_SID_SIZE;
+    if unsafe {
+        CreateWellKnownSid(
+            WinLocalSystemSid,
+            std::ptr::null_mut(),
+            system_sid.as_mut_ptr().cast(),
+            &mut system_sid_size,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { EqualSid(user.User.Sid, system_sid.as_mut_ptr().cast()) } == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Windows named-pipe server is not LocalSystem",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(feature = "server")]

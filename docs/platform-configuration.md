@@ -86,6 +86,9 @@ let config = ClientConfig {
     retry_delay: Duration::from_millis(25),
     max_concurrent_requests: 16,
     max_requests_per_second: Some(50.0),
+    require_windows_server_system: false,
+    #[cfg(windows)]
+    windows_server_pid_verifier: None,
 };
 
 let client = IpcHttpClient::with_config(endpoint, config)?;
@@ -93,6 +96,12 @@ let client = IpcHttpClient::with_config(endpoint, config)?;
 
 Choose pool limits from measured concurrent demand. A larger pool consumes more
 open handles and memory and does not guarantee lower latency.
+
+On Windows, set `require_windows_server_system` when any LocalSystem pipe
+server is acceptable. Set `windows_server_pid_verifier` when the application
+must compare the PID reported by the connected pipe handle with an external
+service policy such as SCM status. Both checks run before request bytes are
+sent, once per physical connection; pooled reuse does not rerun them.
 
 ## Streaming client configuration
 
@@ -146,14 +155,14 @@ let options = kode_bridge::ListenerOptions::new()
     .try_overwrite(true)
     .max_spin_time(std::time::Duration::from_millis(100));
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 let options = options.mode(0o660);
 ```
 
 - `reclaim_name(true)` is the default.
 - `try_overwrite(false)` is the default.
 - Explicit overwrite refuses non-socket paths and live listeners.
-- Custom mode currently returns `Unsupported` on macOS.
+- Custom mode is applied after bind and before listen on Linux and macOS.
 - Use a trusted parent directory because metadata-check then remove is not an
   atomic compare-and-delete operation.
 
