@@ -1,426 +1,167 @@
-# Server Development Guide
+# Server Development Notes
 
-Complete guide for developing servers with kode-bridge.
+This document supplements the [Server Guide](../SERVER_GUIDE.md) with the
+current kode-bridge 0.5 handler, lifecycle, and testing contracts. It avoids
+duplicating the complete runnable examples in `examples/`.
 
-## 🚀 Server Features
+## Handler contract
 
-### HTTP Server (`IpcHttpServer`)
-- **Express.js-style routing**: Familiar patterns for web developers
-- **Middleware support**: Request/response interceptors
-- **JSON handling**: Automatic serialization/deserialization
-- **Error handling**: Structured error responses
-- **Static file serving**: Built-in static content support
-- **Request context**: Rich request information access
+A `Router` handler is a `Send + Sync + 'static` function that returns a `Send`
+future with `kode_bridge::Result<HttpResponse>`.
 
-### Streaming Server (`IpcStreamServer`)
-- **Real-time broadcasting**: Push data to multiple clients
-- **Client lifecycle management**: Connection tracking and cleanup
-- **Multiple data formats**: JSON, text, binary support
-- **Backpressure handling**: Automatic client lag detection
-- **Custom data sources**: Pluggable data generation
-
-## 📋 HTTP Server Examples
-
-### Basic HTTP Server
 ```rust
-use kode_bridge::{IpcHttpServer, Router, HttpResponse, RequestContext, Result};
-use serde_json::json;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let router = Router::new()
-        .get("/", |_| async move {
-            HttpResponse::ok("Welcome to kode-bridge server!")
-        })
-        .get("/health", |_| async move {
-            HttpResponse::json(&json!({
-                "status": "healthy",
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            }))
-        })
-        .post("/api/echo", |ctx| async move {
-            let body: serde_json::Value = ctx.json()?;
-            HttpResponse::json(&json!({
-                "echo": body,
-                "method": ctx.method(),
-                "path": ctx.path()
-            }))
-        });
-
-    let mut server = IpcHttpServer::new("/tmp/example.sock")?
-        .router(router);
-    
-    println!("🚀 Server listening on /tmp/example.sock");
-    server.serve().await
-}
-```
-
-### Advanced HTTP Server with Middleware
-```rust
-use kode_bridge::{IpcHttpServer, Router, HttpResponse, RequestContext, Result};
-use serde_json::json;
-use std::time::Instant;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let router = Router::new()
-        // Middleware: Request logging
-        .middleware(|ctx, next| async move {
-            let start = Instant::now();
-            println!("→ {} {}", ctx.method(), ctx.path());
-            
-            let response = next(ctx).await;
-            
-            let duration = start.elapsed();
-            println!("← {} {} ({:?})", 
-                response.status(), ctx.path(), duration);
-            
-            response
-        })
-        // Routes
-        .get("/api/users/:id", |ctx| async move {
-            let user_id = ctx.param("id").unwrap_or("unknown");
-            HttpResponse::json(&json!({
-                "user_id": user_id,
-                "name": format!("User {}", user_id)
-            }))
-        })
-        .post("/api/users", |ctx| async move {
-            #[derive(serde::Deserialize)]
-            struct CreateUser {
-                name: String,
-                email: String,
-            }
-            
-            let user: CreateUser = ctx.json()?;
-            
-            // Simulate user creation
-            let new_user = json!({
-                "id": 123,
-                "name": user.name,
-                "email": user.email,
-                "created_at": chrono::Utc::now().to_rfc3339()
-            });
-            
-            HttpResponse::json(&new_user).status(201)
-        })
-        .put("/api/config", |ctx| async move {
-            let config: serde_json::Value = ctx.json()?;
-            
-            // Validate configuration
-            if config.get("version").is_none() {
-                return HttpResponse::bad_request("Missing version field");
-            }
-            
-            HttpResponse::json(&json!({
-                "message": "Configuration updated",
-                "config": config
-            }))
-        })
-        .delete("/api/cache", |_| async move {
-            // Simulate cache clearing
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            
-            HttpResponse::json(&json!({
-                "message": "Cache cleared successfully"
-            }))
-        });
-
-    let mut server = IpcHttpServer::new("/tmp/api_server.sock")?
-        .router(router)
-        .max_connections(100)
-        .request_timeout(std::time::Duration::from_secs(30));
-    
-    println!("🚀 API Server listening on /tmp/api_server.sock");
-    server.serve().await
-}
-```
-
-## 📡 Streaming Server Examples
-
-### Basic Streaming Server
-```rust
-use kode_bridge::{IpcStreamServer, StreamSource, Result};
-use serde_json::json;
-use tokio::time::{interval, Duration};
-use tokio_stream::wrappers::IntervalStream;
-use tokio_stream::StreamExt;
-
-struct MetricsSource;
-
-#[async_trait::async_trait]
-impl StreamSource for MetricsSource {
-    async fn generate_stream(&self) -> Result<Box<dyn Stream<Item = String> + Send + Unpin>> {
-        let stream = IntervalStream::new(interval(Duration::from_secs(1)))
-            .map(|_| {
-                let metrics = json!({
-                    "cpu_usage": rand::random::<f64>() * 100.0,
-                    "memory_usage": rand::random::<f64>() * 100.0,
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                });
-                metrics.to_string()
-            });
-        
-        Ok(Box::new(stream))
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut server = IpcStreamServer::new("/tmp/metrics.sock")?
-        .add_source("/metrics", Box::new(MetricsSource))
-        .client_timeout(Duration::from_secs(60));
-    
-    println!("📡 Streaming server listening on /tmp/metrics.sock");
-    server.serve().await
-}
-```
-
-### Advanced Streaming Server with Multiple Sources
-```rust
-use kode_bridge::{IpcStreamServer, StreamSource, Result};
-use serde_json::json;
-use tokio::time::{interval, Duration};
-use tokio_stream::wrappers::IntervalStream;
-use tokio_stream::StreamExt;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-// Traffic monitoring source
-struct TrafficSource {
-    counters: Arc<RwLock<(u64, u64)>>, // (upload, download)
-}
-
-#[async_trait::async_trait]
-impl StreamSource for TrafficSource {
-    async fn generate_stream(&self) -> Result<Box<dyn Stream<Item = String> + Send + Unpin>> {
-        let counters = self.counters.clone();
-        
-        let stream = IntervalStream::new(interval(Duration::from_millis(500)))
-            .map(move |_| {
-                let counters = counters.clone();
-                async move {
-                    let mut guard = counters.write().await;
-                    guard.0 += rand::random::<u64>() % 1000000; // Random upload
-                    guard.1 += rand::random::<u64>() % 2000000; // Random download
-                    
-                    let traffic = json!({
-                        "upload": guard.0,
-                        "download": guard.1,
-                        "upload_rate": rand::random::<u64>() % 10000,
-                        "download_rate": rand::random::<u64>() % 20000,
-                        "timestamp": chrono::Utc::now().to_rfc3339()
-                    });
-                    
-                    traffic.to_string()
-                }
-            })
-            .then(|future| future);
-        
-        Ok(Box::new(stream))
-    }
-}
-
-// System events source
-struct EventsSource;
-
-#[async_trait::async_trait]
-impl StreamSource for EventsSource {
-    async fn generate_stream(&self) -> Result<Box<dyn Stream<Item = String> + Send + Unpin>> {
-        let events = vec![
-            "connection_established",
-            "data_processed", 
-            "cache_miss",
-            "cache_hit",
-            "error_recovered",
-            "backup_completed",
-        ];
-        
-        let stream = IntervalStream::new(interval(Duration::from_secs(2)))
-            .map(move |_| {
-                let event_type = &events[rand::random::<usize>() % events.len()];
-                let event = json!({
-                    "type": event_type,
-                    "severity": if event_type.contains("error") { "high" } else { "normal" },
-                    "message": format!("Event: {}", event_type),
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                });
-                event.to_string()
-            });
-        
-        Ok(Box::new(stream))
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let traffic_counters = Arc::new(RwLock::new((0u64, 0u64)));
-    
-    let mut server = IpcStreamServer::new("/tmp/monitoring.sock")?
-        .add_source("/traffic", Box::new(TrafficSource {
-            counters: traffic_counters.clone()
+let router = kode_bridge::Router::new()
+    .put("/config/:section", |ctx| async move {
+        let section = ctx
+            .path_params
+            .get("section")
+            .cloned()
+            .unwrap_or_default();
+        let value: serde_json::Value = ctx.json()?;
+        kode_bridge::HttpResponse::json(&serde_json::json!({
+            "section": section,
+            "value": value,
         }))
-        .add_source("/events", Box::new(EventsSource))
-        .add_source("/metrics", Box::new(MetricsSource))
-        .client_timeout(Duration::from_secs(120))
-        .max_clients(50);
-    
-    println!("📡 Monitoring server listening on /tmp/monitoring.sock");
-    println!("Available streams:");
-    println!("  /traffic - Real-time traffic data");
-    println!("  /events  - System events");
-    println!("  /metrics - Performance metrics");
-    
-    server.serve().await
-}
+    });
 ```
 
-## 🛠️ Server Configuration
+The router supports literal paths and `:name` parameters. It rejects traversal,
+backslashes, control characters, paths without a leading slash, and paths over
+2048 bytes before dispatch.
 
-### HTTP Server Configuration
+There is no middleware registry in version 0.5. Share behavior through normal
+Rust functions, captured `Arc` state, or application-owned handler wrappers.
+
+## Error boundaries
+
+Malformed request bytes, size limits, read timeouts, handler errors, and
+response writes are distinct boundaries. A handler that wants a structured
+client error should convert validation failures to an `HttpResponse`
+explicitly:
+
 ```rust
-use kode_bridge::{IpcHttpServer, ServerConfig};
-use std::time::Duration;
+use http::StatusCode;
+use kode_bridge::HttpResponse;
 
-let config = ServerConfig {
-    max_connections: 200,
-    request_timeout: Duration::from_secs(30),
-    keep_alive_timeout: Duration::from_secs(60),
-    max_request_size: 1024 * 1024, // 1MB
-    enable_compression: true,
+let response = match ctx.json::<serde_json::Value>() {
+    Ok(value) => HttpResponse::json(&value)?,
+    Err(error) => HttpResponse::error(StatusCode::BAD_REQUEST, &error.to_string()),
 };
-
-let mut server = IpcHttpServer::with_config("/tmp/server.sock", config)?
-    .router(router);
 ```
 
-### Streaming Server Configuration  
+Do not set a short server `write_timeout` if a handler intentionally performs a
+slow local lifecycle operation. Despite the field name, version 0.5 applies it
+to handler completion and does not wrap `framed.send(response)` in a separate
+write timeout. Slow handlers and slow response readers are therefore different
+performance and reliability boundaries.
+
+## Connection ownership
+
+The HTTP server acquires a connection permit before accepting the next client.
+Each accepted connection can serve up to
+`ServerConfig::max_requests_per_connection` requests. A client pool may open a
+replacement connection after that limit; this is expected behavior.
+
+Configure:
+
+- `max_connections` for concurrent open connections;
+- `max_requests_per_connection` for keep-alive lifetime;
+- `read_timeout` for the next request on an open connection;
+- `write_timeout` for handler completion (not the later response write);
+- `max_header_size` and `max_request_size` for memory limits.
+
+## Shared state
+
+Handlers are called concurrently. Capture shared state using an `Arc` and an
+appropriate synchronization primitive. Do not hold a synchronous lock guard
+across `.await`.
+
 ```rust
-use kode_bridge::{IpcStreamServer, StreamServerConfig};
-use std::time::Duration;
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
-let config = StreamServerConfig {
-    max_clients: 100,
-    client_timeout: Duration::from_secs(300),
-    buffer_size: 65536,
-    heartbeat_interval: Duration::from_secs(30),
-    lag_threshold: Duration::from_secs(10),
-};
-
-let mut server = IpcStreamServer::with_config("/tmp/stream.sock", config)?;
-```
-
-## 🔒 Error Handling and Security
-
-### Structured Error Responses
-```rust
-use kode_bridge::{HttpResponse, KodeBridgeError};
-
-// Custom error handling
-.post("/api/validate", |ctx| async move {
-    let data: serde_json::Value = match ctx.json() {
-        Ok(data) => data,
-        Err(e) => {
-            return HttpResponse::bad_request(&format!("Invalid JSON: {}", e));
-        }
-    };
-    
-    // Validate required fields
-    if data.get("required_field").is_none() {
-        return HttpResponse::unprocessable_entity("Missing required_field");
-    }
-    
-    HttpResponse::ok("Validation passed")
-})
-```
-
-### Input Validation and Sanitization
-```rust
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize)]
-struct UserInput {
-    #[serde(deserialize_with = "validate_username")]
-    username: String,
-    
-    #[serde(deserialize_with = "validate_email")]
-    email: String,
-}
-
-fn validate_username<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let username = String::deserialize(deserializer)?;
-    
-    if username.len() < 3 || username.len() > 20 {
-        return Err(serde::de::Error::custom("Username must be 3-20 characters"));
-    }
-    
-    if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return Err(serde::de::Error::custom("Username contains invalid characters"));
-    }
-    
-    Ok(username)
-}
-```
-
-## 📈 Performance Optimization
-
-### Connection Management
-```rust
-// Optimize for high-concurrency scenarios
-let mut server = IpcHttpServer::new("/tmp/server.sock")?
-    .max_connections(500)  // Increase concurrent connections
-    .request_timeout(Duration::from_secs(15))  // Shorter timeout
-    .keep_alive_timeout(Duration::from_secs(30));  // Connection reuse
-```
-
-### Memory Management
-```rust
-// For streaming servers with high throughput
-let mut server = IpcStreamServer::new("/tmp/stream.sock")?
-    .buffer_size(128 * 1024)  // 128KB buffer for high-volume data
-    .max_clients(200)         // Limit clients to prevent memory exhaustion
-    .lag_threshold(Duration::from_secs(5));  // Disconnect slow clients
-```
-
-### Monitoring and Metrics
-```rust
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-
-#[derive(Clone)]
-struct ServerMetrics {
-    requests_total: Arc<AtomicU64>,
-    requests_success: Arc<AtomicU64>,
-    requests_error: Arc<AtomicU64>,
-}
-
-impl ServerMetrics {
-    fn new() -> Self {
-        Self {
-            requests_total: Arc::new(AtomicU64::new(0)),
-            requests_success: Arc::new(AtomicU64::new(0)),
-            requests_error: Arc::new(AtomicU64::new(0)),
+let requests = Arc::new(AtomicU64::new(0));
+let router = kode_bridge::Router::new().get("/count", {
+    let requests = Arc::clone(&requests);
+    move |_| {
+        let requests = Arc::clone(&requests);
+        async move {
+            let count = requests.fetch_add(1, Ordering::Relaxed) + 1;
+            kode_bridge::HttpResponse::json(&serde_json::json!({"count": count}))
         }
     }
-    
-    fn record_request(&self, success: bool) {
-        self.requests_total.fetch_add(1, Ordering::Relaxed);
-        if success {
-            self.requests_success.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.requests_error.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    
-    fn get_stats(&self) -> (u64, u64, u64) {
-        (
-            self.requests_total.load(Ordering::Relaxed),
-            self.requests_success.load(Ordering::Relaxed),
-            self.requests_error.load(Ordering::Relaxed),
-        )
-    }
-}
+});
 ```
+
+## Streaming sources
+
+`IpcStreamServer::serve_with_source` owns one `StreamSource`. The source
+lifecycle is:
+
+1. `initialize()` before accepting clients;
+2. repeated `next_messages()` calls while `has_more()` is true;
+3. `cleanup()` when the source loop exits normally.
+
+Cancelling the server task can abort the source task before `cleanup()` runs.
+Put mandatory resource cleanup in owned values with `Drop`, not only in the
+async source hook.
+
+Messages are sent through a Tokio broadcast channel. When a receiver lags, the
+channel reports and skips the missed messages; a write error or write timeout
+ends that client connection. Size and write-timeout limits still apply.
+`JsonDataSource` is suitable for periodic generation; `IteratorSource` adapts
+a Tokio stream of `StreamMessage` values.
+
+The stream server emits raw frames. Do not use `IpcStreamClient` as its direct
+peer without an HTTP response layer; the two public types intentionally retain
+their pre-0.5 wire behavior.
+
+## Listener lifecycle
+
+On Unix, listener drop removes only the socket path whose device/inode identity
+matches the socket created by that listener. Explicit stale overwrite performs
+a liveness check and refuses regular files, but the final metadata-check/remove
+pair is not atomic. Use a trusted socket directory.
+
+On Windows, each accepted pipe instance is replaced with the next pending
+instance before the connected stream is handed upward. The configured SDDL is
+reused for every instance. Final dirty writes are flushed independently of
+request-future cancellation.
+
+Task cancellation must be awaited before immediate restart so listener drop
+and endpoint cleanup have completed.
+
+## Testing server code
+
+The repository's transport integration suite demonstrates reliable readiness
+without sleep-based startup guesses:
+
+```bash
+cargo test --all-features --test ipc_transport
+cargo test --all-features
+```
+
+When adding server behavior, cover at least:
+
+- method, header, query, path-parameter, and body handling;
+- keep-alive reuse and the per-connection request limit;
+- duplicate listener and restart behavior;
+- request timeout and cancellation followed by a healthy request;
+- 32 concurrent clients on each supported platform;
+- Unix mode, stale socket, and cleanup policy;
+- Windows SDDL, pipe-busy, final-response flush, and drop delivery.
+
+Run real Linux, macOS, and Windows jobs for transport changes. Cross-compilation
+proves type compatibility, not socket or named-pipe runtime behavior.
+
+## Performance work
+
+Use the frozen Criterion suites before changing hot paths:
+
+```bash
+cargo bench --all-features --bench bench_version
+cargo bench --all-features --bench ipc_transport
+```
+
+Keep the same host, toolchain, payloads, sample settings, and endpoint strategy
+for before/after comparisons. Inspect confidence intervals and throughput;
+single wall-clock runs are not sufficient evidence.
