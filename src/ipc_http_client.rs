@@ -9,6 +9,8 @@ use crate::http_client::{send_request, RequestBuilder, Response};
 use crate::metrics::global_metrics;
 use crate::pool::{ConnectionPool, PoolConfig, PooledConnection};
 use crate::retry::{RetryConfig, RetryExecutor};
+#[cfg(windows)]
+use crate::transport::WindowsServerVerification;
 use crate::transport::{Endpoint, IpcStream};
 use bytes::Bytes;
 use http::Method;
@@ -31,6 +33,16 @@ pub struct ClientConfig {
     pub max_concurrent_requests: usize,
     /// Rate limiting: max requests per second
     pub max_requests_per_second: Option<f64>,
+    /// Require the connected Windows named-pipe server to run as LocalSystem.
+    ///
+    /// This option is ignored on non-Windows platforms.
+    pub require_windows_server_system: bool,
+    /// Verify the process ID behind each new physical Windows named-pipe connection.
+    ///
+    /// Pooled connections are verified once when created. A discarded connection is
+    /// verified again after reconnecting.
+    #[cfg(windows)]
+    pub windows_server_pid_verifier: Option<fn(u32) -> std::io::Result<()>>,
 }
 
 impl Default for ClientConfig {
@@ -43,6 +55,9 @@ impl Default for ClientConfig {
             retry_delay: Duration::from_millis(25), // 减少重试延迟
             max_concurrent_requests: 16,            // 增加并发请求数
             max_requests_per_second: Some(50.0),    // 增加请求速率限制
+            require_windows_server_system: false,
+            #[cfg(windows)]
+            windows_server_pid_verifier: None,
         }
     }
 }
@@ -171,11 +186,21 @@ impl IpcHttpClient {
     {
         let endpoint = Endpoint::new(path)?;
 
-        let pool = if config.enable_pooling {
-            Some(ConnectionPool::new(endpoint.clone(), config.pool_config.clone()))
-        } else {
-            None
-        };
+        #[cfg(windows)]
+        let verification =
+            WindowsServerVerification::new(config.require_windows_server_system, config.windows_server_pid_verifier);
+        #[cfg(windows)]
+        let pool = config.enable_pooling.then(|| {
+            ConnectionPool::new_with_windows_server_verification(
+                endpoint.clone(),
+                config.pool_config.clone(),
+                verification,
+            )
+        });
+        #[cfg(not(windows))]
+        let pool = config
+            .enable_pooling
+            .then(|| ConnectionPool::new(endpoint.clone(), config.pool_config.clone()));
 
         // Create retry executor with optimized configuration for different request types
         let retry_config = RetryConfig::for_network_operations()
@@ -197,6 +222,24 @@ impl IpcHttpClient {
         })
     }
 
+    async fn connect_physical(&self) -> std::io::Result<IpcStream> {
+        #[cfg(windows)]
+        {
+            IpcStream::connect_with_windows_server_verification(
+                &self.endpoint,
+                WindowsServerVerification::new(
+                    self.config.require_windows_server_system,
+                    self.config.windows_server_pid_verifier,
+                ),
+            )
+            .await
+        }
+        #[cfg(not(windows))]
+        {
+            IpcStream::connect(&self.endpoint).await
+        }
+    }
+
     /// Create a direct connection (bypassing pool)
     async fn create_direct_connection(&self) -> Result<IpcStream> {
         let mut last_error = None;
@@ -206,7 +249,7 @@ impl IpcHttpClient {
                 tokio::time::sleep(self.config.retry_delay).await;
             }
 
-            match IpcStream::connect(&self.endpoint).await {
+            match self.connect_physical().await {
                 Ok(stream) => {
                     debug!("Created direct connection on attempt {}", attempt + 1);
                     return Ok(stream);
@@ -418,7 +461,7 @@ impl IpcHttpClient {
         }
 
         // 直接创建连接，使用更快的超时设置
-        match tokio::time::timeout(Duration::from_millis(100), IpcStream::connect(&self.endpoint)).await {
+        match tokio::time::timeout(Duration::from_millis(100), self.connect_physical()).await {
             Ok(Ok(stream)) => Ok(Either::Direct(stream)),
             Ok(Err(_)) | Err(_) => {
                 // 如果直接连接失败，回退到普通池化连接

@@ -4,7 +4,7 @@ use super::ListenerOptions;
 use std::fs::Metadata;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
-#[cfg(all(feature = "server", not(target_os = "macos")))]
+#[cfg(feature = "server")]
 use std::os::unix::fs::PermissionsExt as _;
 #[cfg(feature = "server")]
 use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
@@ -46,22 +46,16 @@ pub(crate) struct Listener {
 #[cfg(feature = "server")]
 impl Listener {
     pub(crate) fn bind(path: &Path, options: &ListenerOptions) -> io::Result<Self> {
-        #[cfg(target_os = "macos")]
-        if options.mode.is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Unix listener mode is unsupported on macOS",
-            ));
-        }
-
         let socket = bind_socket(path, options)?;
         let metadata = socket_metadata(path)?;
         let path_guard = options
             .reclaim_name
             .then(|| SocketPathGuard::new(path.to_path_buf(), &metadata));
 
-        #[cfg(not(target_os = "macos"))]
         if let Some(mode) = options.mode {
+            // mode_t is u16 on Apple targets and u32 on Linux.
+            #[allow(clippy::useless_conversion)]
+            let mode = u32::from(mode);
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
         }
 
@@ -86,6 +80,12 @@ impl Listener {
     pub(crate) async fn accept(&mut self) -> io::Result<ServerStream> {
         self.inner.accept().await.map(|(stream, _address)| stream)
     }
+}
+
+#[cfg(feature = "server")]
+pub(crate) fn peer_credentials(stream: &ServerStream) -> io::Result<(u32, u32)> {
+    let credentials = stream.peer_cred()?;
+    Ok((credentials.uid(), credentials.gid()))
 }
 
 #[cfg(feature = "server")]

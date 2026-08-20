@@ -130,6 +130,9 @@ const fn client_config(enable_pooling: bool) -> ClientConfig {
         retry_delay: Duration::from_millis(5),
         max_concurrent_requests: BURST_SIZE + 16,
         max_requests_per_second: None,
+        require_windows_server_system: false,
+        #[cfg(windows)]
+        windows_server_pid_verifier: None,
     }
 }
 

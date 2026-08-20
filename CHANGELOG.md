@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-08-20
+
+### Added
+
+- Restore Unix peer UID/GID in `RequestContext::client_info` through the public `PeerCredentials` type. Credentials are read from the accepted kernel socket before HTTP framing and remain fixed for the lifetime of that connection.
+- Restore `ClientConfig::windows_server_pid_verifier` and `ClientConfig::require_windows_server_system`. Verification runs before a new Windows named-pipe connection can send a request, including pooled and replacement connections.
+
+### Changed
+
+- Complete `ClientConfig` and `ClientInfo` struct literals must include the restored identity fields. Prefer `..Default::default()` for `ClientConfig`; `ClientInfo` literals must provide `PeerCredentials` explicitly.
+
+### Fixed
+
+- Apply configured Unix listener modes on macOS after bind and before listen, with the same socket type and device/inode revalidation used on other Unix platforms.
+
+### Security
+
+- Reject accepted Unix connections when kernel peer credentials cannot be read instead of substituting an identity.
+- Keep caller-defined Windows service policy outside kode-bridge while allowing clients to require LocalSystem or validate the connected server PID against an external service manager.
+
 ## [0.5.0] - 2026-08-15
 
 ### Changed
