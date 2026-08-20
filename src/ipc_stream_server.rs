@@ -125,6 +125,21 @@ impl StreamMessage {
     }
 }
 
+#[derive(Clone)]
+enum BroadcastMessage {
+    Data(Bytes),
+    Close,
+}
+
+impl From<StreamMessage> for BroadcastMessage {
+    fn from(message: StreamMessage) -> Self {
+        match message {
+            StreamMessage::Close => Self::Close,
+            message => Self::Data(message.to_bytes()),
+        }
+    }
+}
+
 /// Client connection information for streaming
 #[derive(Debug, Clone)]
 pub struct StreamClient {
@@ -257,15 +272,15 @@ impl JsonDataSource {
 impl StreamSource for JsonDataSource {
     fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
         Box::pin(async move {
-            let now = Instant::now();
-            if now.duration_since(self.last_generated) >= self.interval {
-                self.last_generated = now;
-                match (self.generator)() {
-                    Ok(value) => Ok(vec![StreamMessage::Json(value)]),
-                    Err(e) => Err(e),
-                }
-            } else {
-                Ok(vec![])
+            let deadline = self.last_generated + self.interval;
+            if self.interval > Duration::ZERO && Instant::now() < deadline {
+                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+            }
+
+            self.last_generated = Instant::now();
+            match (self.generator)() {
+                Ok(value) => Ok(vec![StreamMessage::Json(value)]),
+                Err(error) => Err(error),
             }
         })
     }
@@ -286,6 +301,7 @@ impl StreamSource for JsonDataSource {
 /// Stream from an async iterator
 pub struct IteratorSource<S> {
     stream: S,
+    exhausted: bool,
 }
 
 impl<S> IteratorSource<S>
@@ -294,7 +310,10 @@ where
 {
     /// Create a new iterator source
     pub const fn new(stream: S) -> Self {
-        Self { stream }
+        Self {
+            stream,
+            exhausted: false,
+        }
     }
 }
 
@@ -306,13 +325,16 @@ where
         Box::pin(async move {
             match self.stream.next().await {
                 Some(message) => Ok(vec![message]),
-                None => Ok(vec![]),
+                None => {
+                    self.exhausted = true;
+                    Ok(vec![])
+                }
             }
         })
     }
 
     fn has_more(&self) -> bool {
-        true // Stream sources are considered to always have potential data
+        !self.exhausted
     }
 
     fn initialize(&mut self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
@@ -333,7 +355,7 @@ pub struct IpcStreamServer {
     connection_semaphore: Arc<Semaphore>,
     clients: Arc<RwLock<HashMap<u64, StreamClient>>>,
     client_id_counter: Arc<AtomicU64>,
-    broadcast_tx: Option<broadcast::Sender<StreamMessage>>,
+    broadcast_tx: Option<broadcast::Sender<BroadcastMessage>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -450,7 +472,7 @@ impl IpcStreamServer {
     /// Broadcast a message to all connected clients
     pub fn broadcast(&self, message: StreamMessage) -> Result<usize> {
         if let Some(ref tx) = self.broadcast_tx {
-            match tx.send(message) {
+            match tx.send(message.into()) {
                 Ok(_) => Ok(tx.receiver_count()),
                 Err(_) => Err(KodeBridgeError::connection("No active receivers")),
             }
@@ -497,7 +519,7 @@ impl IpcStreamServer {
                             Ok(messages) => {
                                 let message_count = messages.len() as u64;
                                 for message in messages {
-                                    if source_broadcast_tx.send(message).is_err() {
+                                    if source_broadcast_tx.send(message.into()).is_err() {
                                         debug!("No receivers for broadcast message");
                                     }
                                 }
@@ -524,8 +546,7 @@ impl IpcStreamServer {
                     }
                 }
 
-                // Small delay to prevent tight loops
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
 
             // Cleanup source
@@ -619,7 +640,7 @@ impl IpcStreamServer {
         source_task.abort();
 
         // Send close message to all clients
-        let _ = broadcast_tx.send(StreamMessage::Close);
+        let _ = broadcast_tx.send(BroadcastMessage::Close);
 
         // Wait for active connections to finish
         let start = Instant::now();
@@ -659,7 +680,7 @@ impl IpcStreamServer {
     async fn handle_stream_client(
         mut stream: ServerStream,
         client_id: u64,
-        mut broadcast_rx: broadcast::Receiver<StreamMessage>,
+        mut broadcast_rx: broadcast::Receiver<BroadcastMessage>,
         config: StreamServerConfig,
         stats: Arc<RwLock<StreamServerStats>>,
         clients: Arc<RwLock<HashMap<u64, StreamClient>>>,
@@ -675,27 +696,24 @@ impl IpcStreamServer {
                     match msg_result {
                         Ok(message) => {
                             match message {
-                                StreamMessage::Close => {
+                                BroadcastMessage::Close => {
                                     debug!("Received close message for client {}", client_id);
                                     break;
                                 }
-                                _ => {
-                                    // Send message to client
-                                    let data = message.to_bytes();
-
+                                BroadcastMessage::Data(data) => {
                                     if data.len() > config.max_message_size {
                                         warn!("Message too large for client {}, skipping", client_id);
                                         continue;
                                     }
 
-                                    match timeout(config.write_timeout, stream.write_all(&data)).await {
+                                    match timeout(config.write_timeout, async {
+                                        stream.write_all(&data).await?;
+                                        stream.flush().await
+                                    }).await {
                                         Ok(Ok(())) => {
-                                            if stream.flush().await.is_ok() {
-                                                // Update client stats
-                                                if let Some(client) = clients.write().get_mut(&client_id) {
-                                                    client.messages_sent += 1;
-                                                    client.last_activity = Instant::now();
-                                                }
+                                            if let Some(client) = clients.write().get_mut(&client_id) {
+                                                client.messages_sent += 1;
+                                                client.last_activity = Instant::now();
                                             }
                                         }
                                         Ok(Err(e)) => {
@@ -738,14 +756,19 @@ impl IpcStreamServer {
                         last_keepalive = now;
 
                         let ping_data = StreamMessage::Ping.to_bytes();
-                        if let Err(e) = timeout(config.write_timeout, stream.write_all(&ping_data)).await {
-                            warn!("Failed to send keepalive to client {}: {:?}", client_id, e);
-                            break;
-                        }
-
-                        if let Err(e) = stream.flush().await {
-                            warn!("Failed to flush keepalive to client {}: {}", client_id, e);
-                            break;
+                        match timeout(config.write_timeout, async {
+                            stream.write_all(&ping_data).await?;
+                            stream.flush().await
+                        }).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                warn!("Failed to send keepalive to client {}: {}", client_id, error);
+                                break;
+                            }
+                            Err(_) => {
+                                warn!("Keepalive write timeout for client {}", client_id);
+                                break;
+                            }
                         }
                     }
                 }

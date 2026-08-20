@@ -618,7 +618,11 @@ impl IpcHttpServer {
                 Err(e) => {
                     error!("Failed to parse request: {}", e);
                     let response = HttpResponse::error(StatusCode::BAD_REQUEST, "Bad Request");
-                    let _ = framed.send(response).await;
+                    match timeout(config.write_timeout, framed.send(response)).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => return Err(error),
+                        Err(_) => return Err(KodeBridgeError::timeout_msg("Response write timeout")),
+                    }
                     stats.total_errors.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
@@ -666,17 +670,22 @@ impl IpcHttpServer {
             };
 
             let status_code = response.status;
-            match framed.send(response).await {
-                Ok(_) => {
+            match timeout(config.write_timeout, framed.send(response)).await {
+                Ok(Ok(())) => {
                     stats.total_responses.fetch_add(1, Ordering::Relaxed);
                     if config.enable_logging {
                         info!("✅ {} {} - {}", method, uri, status_code);
                     }
                 }
-                Err(e) => {
-                    error!("Failed to write response: {}", e);
+                Ok(Err(error)) => {
+                    error!("Failed to write response: {}", error);
                     stats.total_errors.fetch_add(1, Ordering::Relaxed);
-                    return Err(e);
+                    return Err(error);
+                }
+                Err(_) => {
+                    error!("Response write timeout");
+                    stats.total_errors.fetch_add(1, Ordering::Relaxed);
+                    return Err(KodeBridgeError::timeout_msg("Response write timeout"));
                 }
             }
 

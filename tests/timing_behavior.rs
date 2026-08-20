@@ -3,18 +3,24 @@
 use bytes::Bytes;
 use kode_bridge::ipc_http_client::{ClientConfig, IpcHttpClient};
 use kode_bridge::ipc_http_server::{HttpResponse, IpcHttpServer, Router, ServerConfig};
+use kode_bridge::ipc_stream_server::{
+    IpcStreamServer, JsonDataSource, StreamMessage, StreamServerConfig, StreamSource,
+};
 use kode_bridge::pool::PoolConfig;
 use kode_bridge::retry::{JitterStrategy, RetryConfig, RetryExecutor};
 use kode_bridge::{KodeBridgeError, Result};
+use serde_json::json;
 use std::error::Error;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::Duration;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::sync::Notify;
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, Instant};
 
@@ -162,6 +168,137 @@ async fn raw_connect(path: &Path) -> std::io::Result<RawStream> {
     tokio::net::windows::named_pipe::ClientOptions::new().open(path)
 }
 
+struct ChannelSource {
+    messages: Mutex<mpsc::Receiver<StreamMessage>>,
+    initialized: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+}
+
+impl StreamSource for ChannelSource {
+    fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            let mut messages = self.messages.lock().await;
+            Ok(messages.recv().await.into_iter().collect())
+        })
+    }
+
+    fn has_more(&self) -> bool {
+        true
+    }
+
+    fn initialize(&mut self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let ready = match self.initialized.lock() {
+                Ok(mut initialized) => initialized.take(),
+                Err(error) => error.into_inner().take(),
+            };
+            if let Some(ready) = ready {
+                let _ = ready.send(());
+            }
+            Ok(())
+        })
+    }
+
+    fn cleanup(&mut self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct StreamServerGuard {
+    endpoint: PathBuf,
+    task: Option<JoinHandle<Result<()>>>,
+}
+
+impl StreamServerGuard {
+    async fn start(endpoint: PathBuf, config: StreamServerConfig) -> TestResult<(Self, mpsc::Sender<StreamMessage>)> {
+        let (message_tx, message_rx) = mpsc::channel(16);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let source = ChannelSource {
+            messages: Mutex::new(message_rx),
+            initialized: std::sync::Mutex::new(Some(ready_tx)),
+        };
+        let mut server = IpcStreamServer::with_config(&endpoint, config)?;
+        let task = tokio::spawn(async move { server.serve_with_source(source).await });
+        timeout(STARTUP_TIMEOUT, ready_rx).await??;
+        Ok((
+            Self {
+                endpoint,
+                task: Some(task),
+            },
+            message_tx,
+        ))
+    }
+
+    async fn stop(mut self) -> TestResult {
+        if let Some(task) = self.task.take() {
+            task.abort();
+            let result = task.await;
+            if !result.is_err_and(|error| error.is_cancelled()) {
+                return Err("stream server did not cancel during test cleanup".into());
+            }
+        }
+
+        #[cfg(unix)]
+        wait_until_path_removed(&self.endpoint).await?;
+        Ok(())
+    }
+}
+
+impl Drop for StreamServerGuard {
+    fn drop(&mut self) {
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
+}
+
+const fn stream_server_config(max_connections: usize, write_timeout: Duration) -> StreamServerConfig {
+    StreamServerConfig {
+        max_connections,
+        buffer_size: 8192,
+        write_timeout,
+        max_message_size: 3 * 1024 * 1024,
+        enable_logging: false,
+        shutdown_timeout: Duration::from_secs(1),
+        broadcast_capacity: 16,
+        keepalive_interval: Duration::from_secs(60),
+    }
+}
+
+async fn publish_until_line(
+    sender: &mpsc::Sender<StreamMessage>,
+    reader: &mut BufReader<RawStream>,
+    message: StreamMessage,
+    expected: &[u8],
+    deadline_after: Duration,
+) -> TestResult {
+    let deadline = Instant::now() + deadline_after;
+    loop {
+        sender.send(message.clone()).await?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let mut line = Vec::with_capacity(expected.len());
+        match timeout(
+            Duration::from_millis(25).min(remaining),
+            reader.read_until(b'\n', &mut line),
+        )
+        .await
+        {
+            Ok(Ok(_)) if line == expected => return Ok(()),
+            Ok(Ok(0)) => return Err("stream client closed before receiving a message".into()),
+            Ok(Ok(_)) => return Err(format!("unexpected stream message: {line:?}").into()),
+            Ok(Err(error)) => return Err(error.into()),
+            Err(_) if Instant::now() < deadline => {}
+            Err(_) => return Err("stream client did not subscribe before its deadline".into()),
+        }
+    }
+}
+
+async fn read_stream_line(reader: &mut BufReader<RawStream>, expected: &[u8]) -> TestResult {
+    let mut line = Vec::with_capacity(expected.len());
+    timeout(REQUEST_TIMEOUT, reader.read_until(b'\n', &mut line)).await??;
+    assert_eq!(line, expected);
+    Ok(())
+}
+
 async fn read_status(stream: &mut RawStream) -> TestResult {
     let mut response = [0u8; 128];
     let bytes_read = timeout(REQUEST_TIMEOUT, stream.read(&mut response)).await??;
@@ -239,7 +376,6 @@ async fn slow_reader_with_a_spare_permit_does_not_block_a_healthy_client() -> Te
     server.stop().await
 }
 
-#[ignore = "candidate acceptance: a bounded response write must release the only connection permit"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn slow_reader_timeout_releases_the_only_connection_permit() -> TestResult {
     let endpoint = unique_endpoint("slow-reader-capacity");
@@ -274,6 +410,107 @@ async fn slow_reader_timeout_releases_the_only_connection_permit() -> TestResult
     drop(slow_reader);
     drop(healthy);
     server.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn streaming_broadcast_preserves_message_bytes() -> TestResult {
+    let endpoint = unique_endpoint("stream-bytes");
+    let (server, sender) =
+        StreamServerGuard::start(endpoint.clone(), stream_server_config(2, Duration::from_secs(1))).await?;
+    let mut reader = BufReader::new(raw_connect(&endpoint).await?);
+
+    publish_until_line(
+        &sender,
+        &mut reader,
+        StreamMessage::text("warmup"),
+        b"warmup\n",
+        REQUEST_TIMEOUT,
+    )
+    .await?;
+
+    sender
+        .send(StreamMessage::Json(json!({"kind":"json"})))
+        .await?;
+    read_stream_line(&mut reader, b"{\"kind\":\"json\"}\n").await?;
+
+    sender.send(StreamMessage::text("text")).await?;
+    read_stream_line(&mut reader, b"text\n").await?;
+
+    sender
+        .send(StreamMessage::binary(Bytes::from_static(b"\x01\x02")))
+        .await?;
+    let mut binary = [0u8; 2];
+    timeout(REQUEST_TIMEOUT, reader.read_exact(&mut binary)).await??;
+    assert_eq!(binary, [1, 2]);
+
+    sender.send(StreamMessage::Ping).await?;
+    read_stream_line(&mut reader, b"PING\n").await?;
+
+    sender.send(StreamMessage::Close).await?;
+    let mut after_close = [0u8; 1];
+    assert_eq!(timeout(REQUEST_TIMEOUT, reader.read(&mut after_close)).await??, 0);
+
+    drop(reader);
+    drop(sender);
+    server.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn streaming_slow_reader_timeout_releases_the_only_connection_permit() -> TestResult {
+    let endpoint = unique_endpoint("stream-slow-reader");
+    let (server, sender) =
+        StreamServerGuard::start(endpoint.clone(), stream_server_config(1, Duration::from_millis(50))).await?;
+    let mut slow_reader = BufReader::new(raw_connect(&endpoint).await?);
+
+    publish_until_line(
+        &sender,
+        &mut slow_reader,
+        StreamMessage::text("warmup"),
+        b"warmup\n",
+        REQUEST_TIMEOUT,
+    )
+    .await?;
+    sender
+        .send(StreamMessage::binary(Bytes::from(vec![b'x'; 2 * 1024 * 1024])))
+        .await?;
+
+    let mut healthy_reader = BufReader::new(raw_connect(&endpoint).await?);
+    publish_until_line(
+        &sender,
+        &mut healthy_reader,
+        StreamMessage::text("healthy"),
+        b"healthy\n",
+        Duration::from_secs(1),
+    )
+    .await?;
+
+    drop(slow_reader);
+    drop(healthy_reader);
+    drop(sender);
+    server.stop().await
+}
+
+#[tokio::test]
+async fn json_source_waits_for_its_next_deadline() -> TestResult {
+    let interval = Duration::from_millis(25);
+    let mut source = JsonDataSource::new(|| Ok(json!({"kind":"periodic"})), interval);
+    let started = Instant::now();
+    let messages = timeout(REQUEST_TIMEOUT, source.next_messages()).await??;
+
+    assert!(started.elapsed() >= interval);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].to_bytes().as_ref(), b"{\"kind\":\"periodic\"}\n");
+    Ok(())
+}
+
+#[tokio::test]
+async fn zero_interval_json_source_produces_without_waiting() -> TestResult {
+    let mut source = JsonDataSource::new(|| Ok(json!({"kind":"immediate"})), Duration::ZERO);
+    let messages = timeout(Duration::from_millis(25), source.next_messages()).await??;
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].to_bytes().as_ref(), b"{\"kind\":\"immediate\"}\n");
+    Ok(())
 }
 
 #[tokio::test]
