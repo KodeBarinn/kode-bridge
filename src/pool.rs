@@ -1,7 +1,5 @@
 use crate::errors::{KodeBridgeError, Result};
-use interprocess::local_socket::tokio::prelude::LocalSocketStream;
-use interprocess::local_socket::traits::tokio::Stream as _;
-use interprocess::local_socket::Name;
+use crate::transport::{Endpoint, IpcStream};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -64,7 +62,7 @@ impl PoolConfig {
 
 /// A pooled connection wrapper
 pub struct PooledConnection {
-    inner: Option<LocalSocketStream>,
+    inner: Option<IpcStream>,
     permit: Option<OwnedSemaphorePermit>,
     created_at: Instant,
     last_used: Instant,
@@ -73,7 +71,7 @@ pub struct PooledConnection {
 }
 
 impl PooledConnection {
-    fn new(stream: LocalSocketStream, permit: OwnedSemaphorePermit, pool: Arc<ConnectionPoolInner>) -> Self {
+    fn new(stream: IpcStream, permit: OwnedSemaphorePermit, pool: Arc<ConnectionPoolInner>) -> Self {
         let now = Instant::now();
         Self {
             inner: Some(stream),
@@ -86,13 +84,13 @@ impl PooledConnection {
     }
 
     /// Get the underlying stream
-    pub fn stream(&mut self) -> Option<&mut LocalSocketStream> {
+    pub fn stream(&mut self) -> Option<&mut IpcStream> {
         self.last_used = Instant::now();
         self.inner.as_mut()
     }
 
     /// Take ownership of the underlying stream
-    pub fn into_stream(mut self) -> Option<LocalSocketStream> {
+    pub fn into_stream(mut self) -> Option<IpcStream> {
         self.reusable = false;
         if let Some(permit) = self.permit.take() {
             self.pool
@@ -135,14 +133,14 @@ impl Drop for PooledConnection {
 }
 
 struct IdleConnection {
-    stream: LocalSocketStream,
+    stream: IpcStream,
     last_used: Instant,
     permit: OwnedSemaphorePermit,
 }
 
 /// Internal pool state with PUT request optimization
 struct ConnectionPoolInner {
-    name: Name<'static>,
+    endpoint: Endpoint,
     config: PoolConfig,
     connections: Mutex<VecDeque<IdleConnection>>,
     semaphore: Arc<Semaphore>,
@@ -151,9 +149,9 @@ struct ConnectionPoolInner {
 }
 
 impl ConnectionPoolInner {
-    fn new(name: Name<'static>, config: PoolConfig) -> Self {
+    fn new(endpoint: Endpoint, config: PoolConfig) -> Self {
         Self {
-            name,
+            endpoint,
             semaphore: Arc::new(Semaphore::new(config.max_size)),
             connections: Mutex::new(VecDeque::new()),
             active_connections: std::sync::atomic::AtomicUsize::new(0),
@@ -162,14 +160,14 @@ impl ConnectionPoolInner {
     }
 
     /// Get a fresh connection for PUT requests, bypassing normal pool
-    async fn get_fresh_connection(&self) -> Result<LocalSocketStream> {
+    async fn get_fresh_connection(&self) -> Result<IpcStream> {
         let mut last_error = None;
         for attempt in 0..2 {
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
 
-            match LocalSocketStream::connect(self.name.clone()).await {
+            match IpcStream::connect(&self.endpoint).await {
                 Ok(stream) => {
                     debug!("Created fresh connection for PUT request");
                     return Ok(stream);
@@ -197,7 +195,7 @@ impl ConnectionPoolInner {
                 break;
             };
 
-            match LocalSocketStream::connect(self.name.clone()).await {
+            match IpcStream::connect(&self.endpoint).await {
                 Ok(stream) => {
                     self.connections.lock().push_back(IdleConnection {
                         stream,
@@ -217,7 +215,7 @@ impl ConnectionPoolInner {
         }
     }
 
-    async fn create_connection(&self) -> Result<LocalSocketStream> {
+    async fn create_connection(&self) -> Result<IpcStream> {
         let mut last_error = None;
         let mut delay = self.config.retry_delay();
         let max_delay = Duration::from_millis(200); // 限制最大延迟为200ms
@@ -229,7 +227,7 @@ impl ConnectionPoolInner {
                 delay = std::cmp::min(delay * 2, max_delay);
             }
 
-            match LocalSocketStream::connect(self.name.clone()).await {
+            match IpcStream::connect(&self.endpoint).await {
                 Ok(stream) => {
                     debug!("Created new connection on attempt {}", attempt + 1);
                     return Ok(stream);
@@ -249,7 +247,7 @@ impl ConnectionPoolInner {
         )))
     }
 
-    fn get_pooled_connection(&self) -> Option<(LocalSocketStream, OwnedSemaphorePermit)> {
+    fn get_pooled_connection(&self) -> Option<(IpcStream, OwnedSemaphorePermit)> {
         let mut connections = self.connections.lock();
 
         let now = Instant::now();
@@ -267,7 +265,7 @@ impl ConnectionPoolInner {
         })
     }
 
-    fn return_connection(&self, stream: LocalSocketStream, permit: OwnedSemaphorePermit, reusable: bool) {
+    fn return_connection(&self, stream: IpcStream, permit: OwnedSemaphorePermit, reusable: bool) {
         self.active_connections
             .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -307,15 +305,15 @@ pub struct ConnectionPool {
 
 impl ConnectionPool {
     /// Create a new connection pool
-    pub fn new(name: Name<'static>, config: PoolConfig) -> Self {
+    pub fn new(endpoint: Endpoint, config: PoolConfig) -> Self {
         Self {
-            inner: Arc::new(ConnectionPoolInner::new(name, config)),
+            inner: Arc::new(ConnectionPoolInner::new(endpoint, config)),
         }
     }
 
     /// Create a connection pool with default configuration
-    pub fn with_default_config(name: Name<'static>) -> Self {
-        Self::new(name, PoolConfig::default())
+    pub fn with_default_config(endpoint: Endpoint) -> Self {
+        Self::new(endpoint, PoolConfig::default())
     }
 
     /// Get a connection from the pool

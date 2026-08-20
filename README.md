@@ -19,7 +19,7 @@
 - **💎 Fluent API**: Reqwest-inspired method chaining with type-safe JSON handling
 - **📦 Auto Serialization**: Built-in JSON request and response processing
 - **⚡ High Performance**: Optimized connection management strategies for different platforms
-- **🔧 Easy Integration**: Based on [interprocess](https://github.com/kotauskas/interprocess) and Tokio async runtime
+- **🔧 Easy Integration**: Thin transport layer built directly on Tokio's Unix sockets and Windows named pipes
 - **🔄 Backward Compatible**: Old API methods still work alongside new fluent interface
 - **📖 Complete Support**: Includes examples, benchmarks, and comprehensive documentation
 
@@ -30,13 +30,13 @@
 ```toml
 [dependencies]
 # Client only (default)
-kode-bridge = "0.1"
+kode-bridge = "0.5"
 
 # Server only  
-kode-bridge = { version = "0.1", features = ["server"] }
+kode-bridge = { version = "0.5", features = ["server"] }
 
 # Both client and server
-kode-bridge = { version = "0.1", features = ["full"] }
+kode-bridge = { version = "0.5", features = ["full"] }
 
 # Required runtime
 tokio = { version = "1", features = ["full"] }
@@ -283,8 +283,8 @@ Benchmarks automatically:
 │            http_client.rs               │   http_server.rs        │
 │        (HTTP Protocol Handler)          │  (HTTP Protocol Server) │
 ├─────────────────────────────────────────┴─────────────────────────┤
-│                    interprocess                              │
-│                (Cross-Platform IPC Transport)                    │
+│              kode-bridge transport adapter                      │
+│               (Tokio native IPC transport)                      │
 ├─────────────────┬───────────────────────┬─────────────────────────┤
 │   Unix Sockets  │    Windows Pipes      │   Feature Flags         │
 │   (Unix/Linux)  │     (Windows)         │ (client/server/full)    │

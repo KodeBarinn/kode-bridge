@@ -1,230 +1,141 @@
-# Migration and Modernization Guide
+# Migrating from 0.4 to 0.5
 
-Complete guide for migrating to kode-bridge's modern architecture.
+kode-bridge 0.5 replaces `interprocess` with a small transport layer backed by
+Tokio Unix domain sockets and Windows named pipes. The HTTP-over-IPC wire
+format, normal client and server constructors, request builders, routing, pool
+behavior, and streaming formats are unchanged.
 
-## 🔄 Migration from Platform-Specific Code
+## Requirements
 
-### Migration from Platform-Specific Code
+Update the dependency and toolchain together:
 
-If you were previously using platform-specific imports:
-
-#### Before (Legacy):
-```rust
-#[cfg(unix)]
-use kode_bridge::ipc_cilent::unix::UnixIpcHttpClient as IpcHttpClient;
-#[cfg(windows)] 
-use kode_bridge::ipc_cilent::windows::WindowsIpcHttpClient as IpcHttpClient;
-
-// Legacy API usage
-let client = IpcHttpClient::new("/tmp/service.sock")?;
-let response = client.request("GET", "/api/status", None).await?;
-```
-
-#### Now (Modern):
-```rust
-use kode_bridge::{IpcHttpClient, ClientConfig};
-use std::time::Duration;
-
-// Modern unified import with advanced configuration
-let config = ClientConfig {
-    enable_pooling: true,
-    max_retries: 3,
-    ..Default::default()
-};
-
-let client = IpcHttpClient::with_config("/tmp/service.sock", config)?;
-
-// Modern fluent API
-let response = client
-    .get("/api/status")
-    .timeout(Duration::from_secs(10))
-    .send()
-    .await?;
-
-// Legacy API still supported for backward compatibility
-let response = client.request("GET", "/api/status", None).await?;
-```
-
-### Modernization Benefits
-
-#### Code Simplification
-- **Single Import**: No more platform-specific conditional imports
-- **Unified API**: Same interface across all platforms
-- **Modern Syntax**: Fluent API similar to reqwest
-
-#### New Features
-- **Connection Pooling**: Automatic connection management
-- **Type-Safe JSON**: Automatic serialization/deserialization
-- **Rich Error Handling**: Categorized errors with context
-- **Streaming Support**: Real-time data processing
-- **Configuration System**: Flexible environment-based setup
-
-### Migration Checklist
-
-#### Step 1: Update Dependencies
 ```toml
 [dependencies]
-kode-bridge = "0.1"
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+kode-bridge = "0.5"
 ```
 
-#### Step 2: Update Imports
+- The minimum supported Rust version is 1.87.
+- The default feature remains `client`.
+- Use `features = ["server"]` for server-only applications and
+  `features = ["full"]` when both sides are needed.
+
+## Necessary API changes
+
+Version 0.4 exposed three types owned by `interprocess`. Version 0.5 replaces
+only those boundaries with kode-bridge-owned types.
+
+| 0.4 API | 0.5 API | Migration |
+| --- | --- | --- |
+| `with_listener_options(interprocess::...::ListenerOptions)` | `with_listener_options(kode_bridge::ListenerOptions)` | Import and construct `kode_bridge::ListenerOptions`. |
+| `ConnectionPool::{new, with_default_config}(Name)` | The same methods accepting `kode_bridge::Endpoint` | Validate the path once with `Endpoint::new(path)?`. |
+| `PooledConnection::{stream, into_stream}` returning `LocalSocketStream` | The same methods returning `kode_bridge::IpcStream` | Remove explicit `LocalSocketStream` annotations. `IpcStream` implements Tokio `AsyncRead` and `AsyncWrite`, including vectored writes. |
+
+Direct pool construction now uses an `Endpoint`:
+
 ```rust
-// Remove platform-specific imports
-// #[cfg(unix)] use kode_bridge::ipc_cilent::unix::...
+use kode_bridge::{
+    pool::{ConnectionPool, PoolConfig},
+    Endpoint,
+};
 
-// Add modern unified imports
-use kode_bridge::{IpcHttpClient, IpcStreamClient, ClientConfig, StreamClientConfig};
+let endpoint = Endpoint::new("/tmp/service.sock")?;
+let pool = ConnectionPool::new(endpoint, PoolConfig::default());
 ```
 
-#### Step 3: Modernize Client Creation
+Most applications only use `IpcHttpClient::new`, `IpcStreamClient::new`,
+`IpcHttpServer::new`, or `IpcStreamServer::new`; those constructors still
+accept a path and do not require an explicit `Endpoint`.
+
+## Endpoint rules
+
+Use a platform-appropriate endpoint:
+
 ```rust
-// Old way
-let client = IpcHttpClient::new(path)?;
+#[cfg(unix)]
+let endpoint = "/tmp/service.sock";
 
-// New way with configuration
-let client = IpcHttpClient::with_config(path, ClientConfig::default())?;
+#[cfg(windows)]
+let endpoint = r"\\.\pipe\service";
 ```
 
-#### Step 4: Update Request Patterns
+- Unix endpoints are file-system paths and cannot contain an interior NUL.
+- Windows endpoints must use `\\HOST\pipe\NAME`; normal local endpoints use
+  `\\.\pipe\NAME`.
+- Endpoint validation now happens when the client, server, or `Endpoint` is
+  constructed.
+
+## Listener configuration
+
+The convenience builders retain their 0.4 call shape:
+
 ```rust
-// Legacy (still works)
-let response = client.request("GET", "/api/data", None).await?;
+#[cfg(all(unix, not(target_os = "macos")))]
+let server = IpcHttpServer::new("/tmp/service.sock")?
+    .with_listener_mode(0o640);
 
-// Modern fluent API (recommended)
-let response = client
-    .get("/api/data")
-    .timeout(Duration::from_secs(5))
-    .send()
-    .await?;
+#[cfg(windows)]
+let server = IpcHttpServer::new(r"\\.\pipe\service")?
+    .with_listener_security_descriptor("D:(A;;GA;;;WD)");
 ```
 
-#### Step 5: Add Error Handling
+For advanced Unix listener behavior:
+
 ```rust
-// Enhanced error handling
-if response.is_success() {
-    let data: MyType = response.json()?;
-    println!("Success: {:?}", data);
-} else if response.is_client_error() {
-    println!("Client error: {}", response.status());
-} else if response.is_server_error() {
-    println!("Server error: {}", response.status());
-}
+#[cfg(unix)]
+let options = kode_bridge::ListenerOptions::new()
+    .reclaim_name(true)
+    .try_overwrite(true)
+    .max_spin_time(std::time::Duration::from_millis(100));
 ```
 
-## 🎯 Best Practices by Platform
+Important behavior:
 
-### Unix/Linux/macOS Best Practices
+- `reclaim_name(true)` remains the default and removes the listener's own Unix
+  socket path on drop.
+- Stale Unix sockets are not replaced unless `try_overwrite(true)` is set.
+- Overwrite refuses regular files and listeners that still accept connections.
+- Unix compare-and-delete cannot be made atomic with the safe standard-library
+  APIs used here. Put production sockets in a trusted parent directory.
+- Custom Unix mode is applied before listening on supported Unix platforms.
+  It currently returns `Unsupported` on macOS.
+- Windows named pipes reject remote clients. A configured SDDL descriptor is
+  applied to every pipe instance.
+- Invalid Windows SDDL retains the 0.4 builder behavior and panics during
+  configuration. Validate untrusted SDDL before passing it to the builder.
 
-#### Development
+## Behavior preserved by the new transport
+
+- HTTP request and response bytes, headers, methods, and JSON handling
+- Client request timeouts and retry boundaries
+- Pool reuse, invalidation, preheating, and per-connection request limits
+- Unix listener cleanup and explicit stale-path policy
+- Windows pipe-busy retry, 512-byte pipe buffers, and flush-on-drop delivery
+- HTTP-style streaming client parsing and newline-delimited stream-server frames
+
+`IpcStreamClient` and `IpcStreamServer` are not a matched pair in 0.5:
+`IpcStreamClient` consumes an HTTP-style streaming response, while
+`IpcStreamServer` broadcasts raw newline-delimited messages. This is existing
+behavior, not a transport migration change.
+
+## Verification checklist
+
+After updating:
+
 ```bash
-# Use /tmp for development
-CUSTOM_SOCK=/tmp/dev_myapp.sock
-
-# Ensure cleanup
-trap "rm -f /tmp/dev_myapp.sock" EXIT
+cargo check --all-features
+cargo test --all-features
+cargo doc --all-features --no-deps
 ```
 
-#### Production
+Applications that directly used one of the three replaced public types should
+also compile their own public API or downstream fixture.
+
+To compare performance on the same host and toolchain:
+
 ```bash
-# Use /var/run for production
-CUSTOM_SOCK=/var/run/myapp/api.sock
-
-# Set proper permissions
-sudo mkdir -p /var/run/myapp
-sudo chown myapp:myapp /var/run/myapp
+cargo bench --all-features --bench bench_version
+cargo bench --all-features --bench ipc_transport
 ```
 
-### Windows Best Practices
-
-#### Development
-```cmd
-REM Use descriptive pipe names
-set CUSTOM_PIPE=\\\\.\\pipe\\myapp_dev
-```
-
-#### Production
-```cmd
-REM Use service-specific names
-set CUSTOM_PIPE=\\\\.\\pipe\\myapp_production
-
-REM For Windows services
-net start MyAppService
-```
-
-#### PowerShell
-```powershell
-# Environment setup
-$env:CUSTOM_PIPE="\\\\.\\pipe\\myapp"
-
-# Service management
-Start-Service -Name "MyAppService"
-```
-
-## 🚀 Performance Optimization Tips
-
-### Connection Pooling
-```rust
-// Optimize pool settings based on usage
-let config = ClientConfig {
-    enable_pooling: true,
-    pool_max_size: 20,      // Adjust based on concurrent load
-    pool_min_idle: 5,       // Keep minimum connections ready
-    pool_max_idle_time_ms: 30000, // 30 seconds
-    ..Default::default()
-};
-```
-
-### Buffer Optimization
-```rust
-// For high-throughput streaming
-let stream_config = StreamClientConfig {
-    buffer_size: 65536, // 64KB for high-volume data
-    ..Default::default()
-};
-
-// For low-latency scenarios
-let stream_config = StreamClientConfig {
-    buffer_size: 4096,  // 4KB for low latency
-    ..Default::default()
-};
-```
-
-### Timeout Configuration
-```rust
-// Different timeout strategies
-let config = ClientConfig {
-    default_timeout: Duration::from_secs(30), // Global timeout
-    ..Default::default()
-};
-
-// Per-request timeout
-let response = client
-    .get("/api/data")
-    .timeout(Duration::from_secs(5)) // Override global timeout
-    .send()
-    .await?;
-```
-
-## 📈 Performance Comparison
-
-### Before vs After Migration
-
-| Feature | Legacy | Modern | Improvement |
-|---------|--------|--------|-------------|
-| Code Lines | 50+ lines | 10-15 lines | 70% reduction |
-| Error Handling | Basic | Rich categorized | Better debugging |
-| Connection Management | Manual | Automatic pooling | 3x throughput |
-| Platform Support | Conditional | Unified | Simplified code |
-| API Style | Verbose | Fluent/Chainable | Better readability |
-| Type Safety | Limited | Full JSON support | Fewer runtime errors |
-
-### Migration Timeline
-
-1. **Phase 1 (Week 1)**: Update dependencies and imports
-2. **Phase 2 (Week 2)**: Modernize core request patterns
-3. **Phase 3 (Week 3)**: Add advanced features (pooling, streaming)
-4. **Phase 4 (Week 4)**: Performance optimization and testing
-5. **Phase 5 (Week 5)**: Production deployment and monitoring
+Do not compare Criterion results from different hosts or shared CI runners as
+if they were a controlled before/after measurement.

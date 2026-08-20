@@ -1,15 +1,13 @@
 use std::path::Path;
 use std::time::Duration;
 
-use interprocess::local_socket::tokio::prelude::LocalSocketStream;
-use interprocess::local_socket::traits::tokio::Stream as _;
-use interprocess::local_socket::{GenericFilePath, Name, ToFsName as _};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::errors::{KodeBridgeError, Result};
 use crate::http_client::RequestBuilder;
 use crate::stream_client::{send_streaming_request, StreamingResponse};
+use crate::transport::{Endpoint, IpcStream};
 use http::Method;
 use std::str::FromStr as _;
 use tracing::{debug, trace};
@@ -40,7 +38,7 @@ impl Default for StreamClientConfig {
 
 /// Specialized IPC streaming client for handling real-time data streams
 pub struct IpcStreamClient {
-    name: Name<'static>,
+    endpoint: Endpoint,
     config: StreamClientConfig,
 }
 
@@ -156,17 +154,13 @@ impl IpcStreamClient {
     where
         P: AsRef<Path>,
     {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()
-            .map_err(|e| KodeBridgeError::configuration(format!("Invalid path: {}", e)))?
-            .into_owned();
+        let endpoint = Endpoint::new(path)?;
 
-        Ok(Self { name, config })
+        Ok(Self { endpoint, config })
     }
 
     /// Create a connection with retry logic
-    async fn create_connection(&self) -> Result<LocalSocketStream> {
+    async fn create_connection(&self) -> Result<IpcStream> {
         let mut last_error = None;
 
         for attempt in 0..self.config.max_retries {
@@ -174,7 +168,7 @@ impl IpcStreamClient {
                 tokio::time::sleep(self.config.retry_delay).await;
             }
 
-            match LocalSocketStream::connect(self.name.clone()).await {
+            match IpcStream::connect(&self.endpoint).await {
                 Ok(stream) => {
                     debug!("Created streaming connection on attempt {}", attempt + 1);
                     return Ok(stream);

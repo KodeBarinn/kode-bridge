@@ -1,5 +1,5 @@
 use crate::errors::KodeBridgeError;
-use rand::{random_range, rngs::StdRng, SeedableRng as _};
+use rand::random_range;
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
@@ -230,7 +230,6 @@ impl RetryExecutor {
         T: Send,
     {
         let mut state = RetryState::new();
-        let mut rng = StdRng::from_seed([0u8; 32]); // Use deterministic seed for Send compatibility
 
         loop {
             state.attempt += 1;
@@ -271,7 +270,7 @@ impl RetryExecutor {
                     }
 
                     // Calculate next delay
-                    let next_delay = self.calculate_delay(&mut state, &mut rng);
+                    let next_delay = self.calculate_delay(&mut state);
 
                     debug!(
                         "Retrying after {}ms (attempt {}/{}, error: {})",
@@ -351,7 +350,7 @@ impl RetryExecutor {
     }
 
     /// Calculate next retry delay with backoff and jitter
-    fn calculate_delay(&self, state: &mut RetryState, _rng: &mut impl rand::Rng) -> Duration {
+    fn calculate_delay(&self, state: &mut RetryState) -> Duration {
         let base_delay = match self.config.backoff_strategy {
             BackoffStrategy::Fixed => self.config.base_delay,
             BackoffStrategy::Exponential { multiplier } => {
@@ -623,7 +622,6 @@ mod tests {
     #[test]
     fn test_backoff_strategies() {
         let mut state = RetryState::new();
-        let mut rng = StdRng::from_seed([0u8; 32]); // Use deterministic seed for Send compatibility
 
         // Test exponential backoff
         let config = RetryConfig::new()
@@ -633,15 +631,15 @@ mod tests {
         let executor = RetryExecutor::new(config);
 
         state.attempt = 1;
-        let delay1 = executor.calculate_delay(&mut state, &mut rng);
+        let delay1 = executor.calculate_delay(&mut state);
         assert_eq!(delay1, Duration::from_millis(100));
 
         state.attempt = 2;
-        let delay2 = executor.calculate_delay(&mut state, &mut rng);
+        let delay2 = executor.calculate_delay(&mut state);
         assert_eq!(delay2, Duration::from_millis(200));
 
         state.attempt = 3;
-        let delay3 = executor.calculate_delay(&mut state, &mut rng);
+        let delay3 = executor.calculate_delay(&mut state);
         assert_eq!(delay3, Duration::from_millis(400));
     }
 
