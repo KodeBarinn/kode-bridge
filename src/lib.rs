@@ -45,7 +45,7 @@ pub use ipc_stream_client::*;
 pub use stream_client::*;
 
 #[cfg(feature = "server")]
-pub use ipc_http_server::{IpcHttpServer, RequestContext, Router, ServerConfig};
+pub use ipc_http_server::{ClientInfo, IpcHttpServer, PeerCredentials, RequestContext, Router, ServerConfig};
 
 #[cfg(feature = "server")]
 pub use ipc_stream_server::*;

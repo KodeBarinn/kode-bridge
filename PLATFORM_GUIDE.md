@@ -102,13 +102,14 @@ cannot modify.
 Custom listener mode is applied before listening on supported Unix platforms:
 
 ```rust
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 let server = kode_bridge::IpcHttpServer::new("/run/my-app/service.sock")?
     .with_listener_mode(0o660);
 ```
 
-Custom mode currently returns `Unsupported` on macOS. Directory ownership and
-permissions remain the primary production access boundary.
+The mode is applied after bind and before listen on Linux and macOS, followed
+by a device/inode identity check. Directory ownership and permissions remain
+the primary production access boundary.
 
 ## Windows listener behavior
 

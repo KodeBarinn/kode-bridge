@@ -1,4 +1,6 @@
 use crate::errors::{KodeBridgeError, Result};
+#[cfg(windows)]
+use crate::transport::WindowsServerVerification;
 use crate::transport::{Endpoint, IpcStream};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -146,6 +148,8 @@ struct ConnectionPoolInner {
     semaphore: Arc<Semaphore>,
     /// Number of checked-out connections currently in use.
     active_connections: std::sync::atomic::AtomicUsize,
+    #[cfg(windows)]
+    windows_server_verification: WindowsServerVerification,
 }
 
 impl ConnectionPoolInner {
@@ -155,7 +159,31 @@ impl ConnectionPoolInner {
             semaphore: Arc::new(Semaphore::new(config.max_size)),
             connections: Mutex::new(VecDeque::new()),
             active_connections: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(windows)]
+            windows_server_verification: WindowsServerVerification::default(),
             config,
+        }
+    }
+
+    #[cfg(windows)]
+    fn new_with_windows_server_verification(
+        endpoint: Endpoint,
+        config: PoolConfig,
+        verification: WindowsServerVerification,
+    ) -> Self {
+        let mut inner = Self::new(endpoint, config);
+        inner.windows_server_verification = verification;
+        inner
+    }
+
+    async fn connect(&self) -> std::io::Result<IpcStream> {
+        #[cfg(windows)]
+        {
+            IpcStream::connect_with_windows_server_verification(&self.endpoint, self.windows_server_verification).await
+        }
+        #[cfg(not(windows))]
+        {
+            IpcStream::connect(&self.endpoint).await
         }
     }
 
@@ -167,7 +195,7 @@ impl ConnectionPoolInner {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
 
-            match IpcStream::connect(&self.endpoint).await {
+            match self.connect().await {
                 Ok(stream) => {
                     debug!("Created fresh connection for PUT request");
                     return Ok(stream);
@@ -195,7 +223,7 @@ impl ConnectionPoolInner {
                 break;
             };
 
-            match IpcStream::connect(&self.endpoint).await {
+            match self.connect().await {
                 Ok(stream) => {
                     self.connections.lock().push_back(IdleConnection {
                         stream,
@@ -227,7 +255,7 @@ impl ConnectionPoolInner {
                 delay = std::cmp::min(delay * 2, max_delay);
             }
 
-            match IpcStream::connect(&self.endpoint).await {
+            match self.connect().await {
                 Ok(stream) => {
                     debug!("Created new connection on attempt {}", attempt + 1);
                     return Ok(stream);
@@ -308,6 +336,21 @@ impl ConnectionPool {
     pub fn new(endpoint: Endpoint, config: PoolConfig) -> Self {
         Self {
             inner: Arc::new(ConnectionPoolInner::new(endpoint, config)),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn new_with_windows_server_verification(
+        endpoint: Endpoint,
+        config: PoolConfig,
+        verification: WindowsServerVerification,
+    ) -> Self {
+        Self {
+            inner: Arc::new(ConnectionPoolInner::new_with_windows_server_verification(
+                endpoint,
+                config,
+                verification,
+            )),
         }
     }
 

@@ -14,6 +14,8 @@ use std::error::Error;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+#[cfg(windows)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -65,6 +67,9 @@ const fn client_config(enable_pooling: bool) -> ClientConfig {
         retry_delay: Duration::from_millis(5),
         max_concurrent_requests: CONCURRENT_CLIENTS + 8,
         max_requests_per_second: None,
+        require_windows_server_system: false,
+        #[cfg(windows)]
+        windows_server_pid_verifier: None,
     }
 }
 
@@ -115,6 +120,13 @@ fn test_router() -> Router {
         })
         .get("/connection", |ctx| async move {
             HttpResponse::json(&json!({"connection_id": ctx.client_info.connection_id}))
+        })
+        .get("/identity", |ctx| async move {
+            HttpResponse::json(&json!({
+                "connection_id": ctx.client_info.connection_id,
+                "uid": ctx.client_info.peer_credentials.uid,
+                "gid": ctx.client_info.peer_credentials.gid,
+            }))
         })
         .get("/stream", |_ctx| async {
             Ok(HttpResponse::builder()
@@ -316,6 +328,26 @@ async fn pooled_connection_reaches_server_request_limit() -> TestResult {
 
     let replacement = response_json(client.get("/connection").send().await?)?;
     assert_ne!(replacement["connection_id"], first["connection_id"]);
+
+    drop(client);
+    server.stop().await
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unix_peer_credentials_are_kernel_reported_and_stable_per_connection() -> TestResult {
+    let endpoint = unique_endpoint("peer-credentials");
+    let server = HttpServerGuard::start(endpoint.clone(), server_config(), test_router()).await?;
+    let client = pooled_client(&endpoint)?;
+
+    let first = response_json(client.get("/identity").send().await?)?;
+    let second = response_json(client.get("/identity").send().await?)?;
+
+    assert_eq!(first["uid"], u64::from(unsafe { libc::geteuid() }));
+    assert_eq!(first["gid"], u64::from(unsafe { libc::getegid() }));
+    assert_eq!(second["uid"], first["uid"]);
+    assert_eq!(second["gid"], first["gid"]);
+    assert_eq!(second["connection_id"], first["connection_id"]);
 
     drop(client);
     server.stop().await
@@ -640,12 +672,12 @@ async fn unix_stale_socket_and_drop_cleanup_are_preserved() -> TestResult {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn linux_listener_mode_is_applied() -> TestResult {
+async fn unix_listener_mode_is_applied() -> TestResult {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let endpoint = unique_endpoint("linux-mode");
+    let endpoint = unique_endpoint("unix-mode");
     let server = IpcHttpServer::with_config(&endpoint, server_config())?
         .with_listener_mode(0o640)
         .router(test_router());
@@ -653,23 +685,6 @@ async fn linux_listener_mode_is_applied() -> TestResult {
     let mode = std::fs::metadata(&endpoint)?.permissions().mode() & 0o777;
     assert_eq!(mode, 0o640);
     server.stop().await
-}
-
-#[cfg(target_os = "macos")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn macos_listener_mode_is_currently_unsupported() -> TestResult {
-    let endpoint = unique_endpoint("macos-mode");
-    let mut server = IpcHttpServer::with_config(&endpoint, server_config())?
-        .with_listener_mode(0o640)
-        .router(test_router());
-    let result = timeout(Duration::from_secs(1), server.serve()).await?;
-    let error = match result {
-        Ok(()) => return Err("macOS listener mode unexpectedly succeeded".into()),
-        Err(error) => error,
-    };
-    assert!(error.to_string().contains("unsupported"));
-    assert!(!endpoint.exists());
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -730,6 +745,182 @@ async fn windows_sddl_listener_accepts_thirty_two_clients() -> TestResult {
         result??;
     }
 
+    server.stop().await
+}
+
+#[cfg(windows)]
+static WINDOWS_VERIFIER_SUCCESS_CALLS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(windows)]
+static WINDOWS_VERIFIER_FAILURE_CALLS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(windows)]
+static WINDOWS_VERIFIER_REUSE_CALLS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(windows)]
+static WINDOWS_VERIFIER_RECONNECT_CALLS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(windows)]
+static WINDOWS_VERIFIER_PUT_FALLBACK_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(windows)]
+fn verify_current_process(process_id: u32, calls: &AtomicUsize) -> std::io::Result<()> {
+    calls.fetch_add(1, Ordering::SeqCst);
+    if process_id == std::process::id() {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "named-pipe server PID did not match the test server",
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn accept_windows_server(process_id: u32) -> std::io::Result<()> {
+    verify_current_process(process_id, &WINDOWS_VERIFIER_SUCCESS_CALLS)
+}
+
+#[cfg(windows)]
+fn reject_windows_server(_process_id: u32) -> std::io::Result<()> {
+    WINDOWS_VERIFIER_FAILURE_CALLS.fetch_add(1, Ordering::SeqCst);
+    Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "injected server identity rejection",
+    ))
+}
+
+#[cfg(windows)]
+fn accept_windows_server_for_reuse(process_id: u32) -> std::io::Result<()> {
+    verify_current_process(process_id, &WINDOWS_VERIFIER_REUSE_CALLS)
+}
+
+#[cfg(windows)]
+fn accept_windows_server_for_reconnect(process_id: u32) -> std::io::Result<()> {
+    verify_current_process(process_id, &WINDOWS_VERIFIER_RECONNECT_CALLS)
+}
+
+#[cfg(windows)]
+fn accept_windows_server_for_put_fallback(process_id: u32) -> std::io::Result<()> {
+    verify_current_process(process_id, &WINDOWS_VERIFIER_PUT_FALLBACK_CALLS)
+}
+
+#[cfg(windows)]
+fn windows_verified_client_config(enable_pooling: bool, verifier: fn(u32) -> std::io::Result<()>) -> ClientConfig {
+    let mut config = client_config(enable_pooling);
+    config.max_retries = 1;
+    config.pool_config.max_retries = 1;
+    config.windows_server_pid_verifier = Some(verifier);
+    config
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn windows_server_pid_verifier_accepts_before_request() -> TestResult {
+    WINDOWS_VERIFIER_SUCCESS_CALLS.store(0, Ordering::SeqCst);
+    let endpoint = unique_endpoint("windows-verifier-success");
+    let server = HttpServerGuard::start(endpoint.clone(), server_config(), test_router()).await?;
+    let config = windows_verified_client_config(false, accept_windows_server);
+    let client = IpcHttpClient::with_config(&endpoint, config)?;
+
+    assert!(client.get("/ready").send().await?.is_success());
+    assert_eq!(WINDOWS_VERIFIER_SUCCESS_CALLS.load(Ordering::SeqCst), 1);
+
+    drop(client);
+    server.stop().await
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn windows_server_pid_verifier_rejects_before_request() -> TestResult {
+    WINDOWS_VERIFIER_FAILURE_CALLS.store(0, Ordering::SeqCst);
+    let endpoint = unique_endpoint("windows-verifier-failure");
+    let server = HttpServerGuard::start(endpoint.clone(), server_config(), test_router()).await?;
+    let config = windows_verified_client_config(false, reject_windows_server);
+    let client = IpcHttpClient::with_config(&endpoint, config)?;
+
+    assert!(client.get("/ready").send().await.is_err());
+    assert_eq!(WINDOWS_VERIFIER_FAILURE_CALLS.load(Ordering::SeqCst), 1);
+
+    drop(client);
+    server.stop().await
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn windows_server_pid_verifier_runs_once_for_pooled_connection() -> TestResult {
+    WINDOWS_VERIFIER_REUSE_CALLS.store(0, Ordering::SeqCst);
+    let endpoint = unique_endpoint("windows-verifier-reuse");
+    let server = HttpServerGuard::start(endpoint.clone(), server_config(), test_router()).await?;
+    let config = windows_verified_client_config(true, accept_windows_server_for_reuse);
+    let client = IpcHttpClient::with_config(&endpoint, config)?;
+
+    let first = response_json(client.get("/connection").send().await?)?;
+    let second = response_json(client.get("/connection").send().await?)?;
+    assert_eq!(first["connection_id"], second["connection_id"]);
+    assert_eq!(WINDOWS_VERIFIER_REUSE_CALLS.load(Ordering::SeqCst), 1);
+
+    drop(client);
+    server.stop().await
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn windows_server_pid_verifier_runs_again_after_reconnect() -> TestResult {
+    WINDOWS_VERIFIER_RECONNECT_CALLS.store(0, Ordering::SeqCst);
+    let endpoint = unique_endpoint("windows-verifier-reconnect");
+    let mut server_settings = server_config();
+    server_settings.max_requests_per_connection = 1;
+    let server = HttpServerGuard::start(endpoint.clone(), server_settings, test_router()).await?;
+    let mut config = windows_verified_client_config(true, accept_windows_server_for_reconnect);
+    config.max_retries = 3;
+    config.pool_config.max_retries = 3;
+    let client = IpcHttpClient::with_config(&endpoint, config)?;
+
+    let first = response_json(client.get("/connection").send().await?)?;
+    let second = response_json(client.get("/connection").send().await?)?;
+    assert_ne!(first["connection_id"], second["connection_id"]);
+    assert_eq!(WINDOWS_VERIFIER_RECONNECT_CALLS.load(Ordering::SeqCst), 2);
+
+    drop(client);
+    server.stop().await
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn windows_server_pid_verifier_covers_large_put_direct_fallback() -> TestResult {
+    WINDOWS_VERIFIER_PUT_FALLBACK_CALLS.store(0, Ordering::SeqCst);
+    let endpoint = unique_endpoint("windows-verifier-put-fallback");
+    let server = HttpServerGuard::start(endpoint.clone(), server_config(), test_router()).await?;
+    let mut config = windows_verified_client_config(true, accept_windows_server_for_put_fallback);
+    config.pool_config.max_size = 1;
+    let client = IpcHttpClient::with_config(&endpoint, config)?;
+
+    client.preheat_for_puts(1).await;
+    assert_eq!(WINDOWS_VERIFIER_PUT_FALLBACK_CALLS.load(Ordering::SeqCst), 1);
+
+    let body = Bytes::from(json!({"payload": "x".repeat(12_000)}).to_string());
+    assert!(client
+        .put("/method")
+        .json_bytes(body)
+        .send()
+        .await?
+        .is_success());
+    assert_eq!(WINDOWS_VERIFIER_PUT_FALLBACK_CALLS.load(Ordering::SeqCst), 2);
+
+    drop(client);
+    server.stop().await
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn windows_local_system_requirement_rejects_user_server() -> TestResult {
+    let endpoint = unique_endpoint("windows-require-system");
+    let server = HttpServerGuard::start(endpoint.clone(), server_config(), test_router()).await?;
+    let mut config = client_config(false);
+    config.max_retries = 1;
+    config.require_windows_server_system = true;
+    let client = IpcHttpClient::with_config(&endpoint, config)?;
+
+    assert!(client.get("/ready").send().await.is_err());
+
+    drop(client);
     server.stop().await
 }
 

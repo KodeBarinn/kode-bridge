@@ -16,6 +16,26 @@ use unix as platform;
 #[cfg(windows)]
 use windows as platform;
 
+#[cfg(windows)]
+pub(crate) type WindowsServerPidVerifier = fn(u32) -> std::io::Result<()>;
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct WindowsServerVerification {
+    pub(crate) require_system: bool,
+    pub(crate) verifier: Option<WindowsServerPidVerifier>,
+}
+
+#[cfg(windows)]
+impl WindowsServerVerification {
+    pub(crate) const fn new(require_system: bool, verifier: Option<WindowsServerPidVerifier>) -> Self {
+        Self {
+            require_system,
+            verifier,
+        }
+    }
+}
+
 /// A validated cross-platform IPC endpoint.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Endpoint(PathBuf);
@@ -154,6 +174,16 @@ impl IpcStream {
     pub(crate) async fn connect(endpoint: &Endpoint) -> std::io::Result<Self> {
         platform::connect(endpoint.as_path()).await.map(Self)
     }
+
+    #[cfg(windows)]
+    pub(crate) async fn connect_with_windows_server_verification(
+        endpoint: &Endpoint,
+        verification: WindowsServerVerification,
+    ) -> std::io::Result<Self> {
+        platform::connect_with_server_verification(endpoint.as_path(), verification)
+            .await
+            .map(Self)
+    }
 }
 
 impl AsyncRead for IpcStream {
@@ -203,4 +233,9 @@ impl Listener {
     pub(crate) async fn accept(&mut self) -> std::io::Result<ServerStream> {
         self.0.accept().await
     }
+}
+
+#[cfg(all(feature = "server", unix))]
+pub(crate) fn peer_credentials(stream: &ServerStream) -> std::io::Result<(u32, u32)> {
+    platform::peer_credentials(stream)
 }
