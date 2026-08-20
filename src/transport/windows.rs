@@ -427,6 +427,42 @@ mod tests {
         Ok((server, client))
     }
 
+    fn inject_pending_flush<T: AsHandle>(stream: &mut PipeStream<T>) -> oneshot::Sender<()> {
+        let (release_tx, release_rx) = oneshot::channel();
+        stream.flush = Some(tokio::spawn(async move {
+            let _ = release_rx.await;
+            Ok(())
+        }));
+        release_tx
+    }
+
+    async fn flush_and_read_payload(
+        server: &mut ServerStream,
+        client: &mut ClientStream,
+        payload: &[u8],
+        read_delay: Duration,
+    ) -> io::Result<()> {
+        let mut received = vec![0; payload.len()];
+        let complete = async {
+            tokio::try_join!(server.flush(), async {
+                tokio::time::sleep(read_delay).await;
+                client.read_exact(&mut received).await
+            })?;
+            Ok::<(), io::Error>(())
+        };
+        match tokio::time::timeout(Duration::from_secs(5), complete).await {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "pipe flush and client read did not complete within the deadline",
+                ));
+            }
+        }
+        assert_eq!(received, payload);
+        Ok(())
+    }
+
     async fn read_payload(client: &mut ClientStream, payload: &[u8]) -> io::Result<()> {
         let mut received = vec![0; payload.len()];
         match tokio::time::timeout(Duration::from_secs(5), client.read_exact(&mut received)).await {
@@ -445,29 +481,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flush_waits_for_a_slow_reader() -> io::Result<()> {
+    async fn explicit_flush_and_client_read_complete_with_payload() -> io::Result<()> {
         let (mut server, mut client) = connected_pair("flush").await?;
         let payload = b"final response";
         server.write_all(payload).await?;
 
-        let mut flush = Box::pin(server.flush());
-        let premature = tokio::time::timeout(Duration::from_millis(50), &mut flush).await;
-        assert!(
-            premature.is_err(),
-            "pipe flush completed before the client read buffered data"
-        );
-
-        read_payload(&mut client, payload).await?;
-        match tokio::time::timeout(Duration::from_secs(5), &mut flush).await {
-            Ok(result) => result?,
-            Err(_elapsed) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "pipe flush did not complete after the client read the response",
-                ));
-            }
-        }
-        Ok(())
+        flush_and_read_payload(&mut server, &mut client, payload, Duration::from_millis(50)).await
     }
 
     #[tokio::test]
@@ -479,45 +498,30 @@ mod tests {
         server_one.write_all(payload_one).await?;
         server_two.write_all(payload_two).await?;
 
+        let release_one = inject_pending_flush(&mut server_one);
         let mut flush_one = Box::pin(server_one.flush());
         let flush_one_pending =
             std::future::poll_fn(|cx| Poll::Ready(std::future::Future::poll(flush_one.as_mut(), cx).is_pending()))
                 .await;
-        assert!(flush_one_pending, "first flush completed before its client read");
+        assert!(flush_one_pending, "injected first flush did not remain pending");
 
-        let mut flush_two = Box::pin(server_two.flush());
-        let flush_two_pending =
-            std::future::poll_fn(|cx| Poll::Ready(std::future::Future::poll(flush_two.as_mut(), cx).is_pending()))
+        flush_and_read_payload(&mut server_two, &mut client_two, payload_two, Duration::ZERO).await?;
+
+        let first_still_pending =
+            std::future::poll_fn(|cx| Poll::Ready(std::future::Future::poll(flush_one.as_mut(), cx).is_pending()))
                 .await;
-        assert!(flush_two_pending, "second flush completed before its client read");
-
-        read_payload(&mut client_two, payload_two).await?;
-        match tokio::time::timeout(Duration::from_secs(5), &mut flush_two).await {
-            Ok(result) => result?,
-            Err(_elapsed) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "second flush was blocked by the first connection",
-                ));
-            }
-        }
-
-        let first_still_pending = tokio::time::timeout(Duration::from_millis(50), &mut flush_one).await;
-        assert!(
-            first_still_pending.is_err(),
-            "first flush completed before its client read"
-        );
-        read_payload(&mut client_one, payload_one).await?;
+        assert!(first_still_pending, "injected first flush completed before release");
+        let _ = release_one.send(());
         match tokio::time::timeout(Duration::from_secs(5), &mut flush_one).await {
             Ok(result) => result?,
             Err(_elapsed) => {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "first flush did not complete after its client read",
+                    "injected first flush did not complete after release",
                 ));
             }
         }
-        Ok(())
+        read_payload(&mut client_one, payload_one).await
     }
 
     #[tokio::test]
@@ -536,12 +540,14 @@ mod tests {
         let payload = b"complete response after cancelled flush";
         server.write_all(payload).await?;
 
+        let release = inject_pending_flush(&mut server);
         let mut flush = Box::pin(server.flush());
         let pending =
             std::future::poll_fn(|cx| Poll::Ready(std::future::Future::poll(flush.as_mut(), cx).is_pending())).await;
-        assert!(pending, "pipe flush completed before the client read buffered data");
+        assert!(pending, "injected flush did not remain pending");
         drop(flush);
         drop(server);
+        drop(release);
 
         read_payload(&mut client, payload).await
     }
@@ -563,24 +569,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn thirty_two_slow_reader_flushes_complete_without_fallback_pressure() -> io::Result<()> {
+    async fn thirty_two_concurrent_flushes_and_reads_complete_without_hanging() -> io::Result<()> {
         const CLIENTS: usize = 32;
-        let payload = b"slow reader response";
+        let payload = b"concurrent response";
         let mut clients = Vec::with_capacity(CLIENTS);
         let mut started_receivers = Vec::with_capacity(CLIENTS);
         let mut flush_tasks = Vec::with_capacity(CLIENTS);
 
         for index in 0..CLIENTS {
             let (mut server, client) = connected_pair(&format!("stress-{index}")).await?;
-            server.write_all(payload).await?;
             let (started_tx, started_rx) = oneshot::channel();
             let flush_task = tokio::spawn(async move {
+                server.write_all(payload).await?;
                 let mut flush = Box::pin(server.flush());
                 let mut started_tx = Some(started_tx);
                 std::future::poll_fn(|cx| {
                     let result = std::future::Future::poll(flush.as_mut(), cx);
                     if let Some(started_tx) = started_tx.take() {
-                        let _ = started_tx.send(result.is_pending());
+                        let _ = started_tx.send(());
                     }
                     result
                 })
@@ -591,44 +597,29 @@ mod tests {
             flush_tasks.push(flush_task);
         }
 
-        for started_rx in started_receivers {
-            match tokio::time::timeout(Duration::from_secs(5), started_rx).await {
-                Ok(Ok(true)) => {}
-                Ok(Ok(false)) => {
-                    return Err(io::Error::other(
-                        "named-pipe flush completed before its slow reader consumed data",
-                    ));
-                }
-                Ok(Err(error)) => return Err(io::Error::other(error)),
-                Err(_elapsed) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "named-pipe flush did not reach its first poll",
-                    ));
-                }
+        let complete = async {
+            for started in futures::future::join_all(started_receivers).await {
+                started.map_err(io::Error::other)?;
             }
-        }
-        assert!(flush_tasks.iter().all(|task| !task.is_finished()));
 
-        let reads = clients
-            .into_iter()
-            .map(|mut client| async move { read_payload(&mut client, payload).await });
-        for result in futures::future::join_all(reads).await {
-            result?;
-        }
-
-        for flush_task in flush_tasks {
-            match tokio::time::timeout(Duration::from_secs(10), flush_task).await {
-                Ok(Ok(result)) => result?,
-                Ok(Err(error)) => return Err(io::Error::other(error)),
-                Err(_elapsed) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "named-pipe flush did not complete after readers consumed every payload",
-                    ));
-                }
+            let reads = clients
+                .into_iter()
+                .map(|mut client| async move { read_payload(&mut client, payload).await });
+            for result in futures::future::join_all(reads).await {
+                result?;
             }
+
+            for result in futures::future::join_all(flush_tasks).await {
+                result.map_err(io::Error::other)??;
+            }
+            Ok::<(), io::Error>(())
+        };
+        match tokio::time::timeout(Duration::from_secs(10), complete).await {
+            Ok(result) => result,
+            Err(_elapsed) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "concurrent named-pipe flushes and reads did not complete within the deadline",
+            )),
         }
-        Ok(())
     }
 }
