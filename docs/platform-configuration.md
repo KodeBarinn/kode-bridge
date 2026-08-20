@@ -168,8 +168,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #### Configuration
 - **Default Path**: `/tmp/example.sock`
-- **Permissions**: Automatically handles socket file permissions
-- **Cleanup**: Automatic socket file cleanup on client shutdown
+- **Permissions**: Use `.with_listener_mode(mode)` on supported Unix systems; custom mode is currently unsupported on macOS
+- **Cleanup**: The listener removes its own socket file on drop, but does not replace a stale socket by default
+
+For advanced listener configuration, use kode-bridge's own `ListenerOptions`:
+
+```rust
+use kode_bridge::{IpcHttpServer, ListenerOptions};
+use std::time::Duration;
+
+let options = ListenerOptions::new()
+    .reclaim_name(true)
+    .try_overwrite(true)
+    .max_spin_time(Duration::from_millis(100));
+let server = IpcHttpServer::new("/tmp/example.sock")?
+    .with_listener_options(options);
+```
+
+`try_overwrite(true)` only attempts to replace a path verified as the same stale Unix socket. It refuses regular files and live listeners. Startup and cleanup re-check the socket type and device/inode identity before acting.
+
+These checks are not an atomic compare-and-delete operation: safe standard-library APIs leave a residual race if another process can replace the path after the final metadata check. Put production sockets in a trusted parent directory that untrusted users cannot modify.
 
 #### Best Practices
 ```bash
@@ -196,7 +214,14 @@ CUSTOM_SOCK=/var/run/my_app/api.sock
 #### Configuration
 - **Default Path**: `\\.\\pipe\\example`
 - **Namespace**: Uses the `\\.\\pipe\\` namespace
-- **Security**: Automatic security descriptor management
+- **Security**: Named pipes reject remote clients by default; custom SDDL is applied to every instance
+
+```rust
+let server = IpcHttpServer::new(r"\\.\pipe\example")?
+    .with_listener_security_descriptor("D:(A;;GA;;;WD)");
+```
+
+Invalid SDDL is rejected immediately by the builder. The default client retains Tokio's identification-level security quality-of-service settings.
 
 #### Best Practices
 ```cmd

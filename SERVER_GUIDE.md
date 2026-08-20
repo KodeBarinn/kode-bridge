@@ -12,9 +12,9 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-kode-bridge = { version = "0.1", features = ["server"] }
+kode-bridge = { version = "0.5", features = ["server"] }
 # Or for both client and server
-kode-bridge = { version = "0.1", features = ["full"] }
+kode-bridge = { version = "0.5", features = ["full"] }
 
 # Required dependencies for examples
 tokio = { version = "1", features = ["full"] }

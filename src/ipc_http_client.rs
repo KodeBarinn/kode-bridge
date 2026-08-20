@@ -1,9 +1,6 @@
 use std::path::Path;
 use std::time::Duration;
 
-use interprocess::local_socket::tokio::prelude::LocalSocketStream;
-use interprocess::local_socket::traits::tokio::Stream as _;
-use interprocess::local_socket::{GenericFilePath, Name, ToFsName as _};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -12,6 +9,7 @@ use crate::http_client::{send_request, RequestBuilder, Response};
 use crate::metrics::global_metrics;
 use crate::pool::{ConnectionPool, PoolConfig, PooledConnection};
 use crate::retry::{RetryConfig, RetryExecutor};
+use crate::transport::{Endpoint, IpcStream};
 use bytes::Bytes;
 use http::Method;
 use std::str::FromStr as _;
@@ -54,7 +52,7 @@ impl Default for ClientConfig {
 /// This client is optimized for request-response patterns with connection pooling support.
 /// For streaming functionality, use `IpcStreamClient` instead.
 pub struct IpcHttpClient {
-    name: Name<'static>,
+    endpoint: Endpoint,
     config: ClientConfig,
     pool: Option<ConnectionPool>,
     retry_executor: RetryExecutor,
@@ -171,14 +169,10 @@ impl IpcHttpClient {
     where
         P: AsRef<Path>,
     {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()
-            .map_err(|e| KodeBridgeError::configuration(format!("Invalid path: {}", e)))?
-            .into_owned();
+        let endpoint = Endpoint::new(path)?;
 
         let pool = if config.enable_pooling {
-            Some(ConnectionPool::new(name.clone(), config.pool_config.clone()))
+            Some(ConnectionPool::new(endpoint.clone(), config.pool_config.clone()))
         } else {
             None
         };
@@ -195,7 +189,7 @@ impl IpcHttpClient {
         let put_retry_executor = RetryExecutor::new(put_retry_config);
 
         Ok(Self {
-            name,
+            endpoint,
             config,
             pool,
             retry_executor,
@@ -204,7 +198,7 @@ impl IpcHttpClient {
     }
 
     /// Create a direct connection (bypassing pool)
-    async fn create_direct_connection(&self) -> Result<LocalSocketStream> {
+    async fn create_direct_connection(&self) -> Result<IpcStream> {
         let mut last_error = None;
 
         for attempt in 0..self.config.max_retries {
@@ -212,7 +206,7 @@ impl IpcHttpClient {
                 tokio::time::sleep(self.config.retry_delay).await;
             }
 
-            match LocalSocketStream::connect(self.name.clone()).await {
+            match IpcStream::connect(&self.endpoint).await {
                 Ok(stream) => {
                     debug!("Created direct connection on attempt {}", attempt + 1);
                     return Ok(stream);
@@ -234,7 +228,7 @@ impl IpcHttpClient {
     }
 
     /// Get a connection (from pool or create new)
-    async fn get_connection(&self) -> Result<Either<PooledConnection, LocalSocketStream>> {
+    async fn get_connection(&self) -> Result<Either<PooledConnection, IpcStream>> {
         let metrics = global_metrics();
 
         if let Some(ref pool) = self.pool {
@@ -412,9 +406,7 @@ impl IpcHttpClient {
     }
 
     /// Get a fresh connection optimized for PUT requests
-    async fn get_fresh_connection(&self) -> Result<Either<PooledConnection, LocalSocketStream>> {
-        use interprocess::local_socket::tokio::prelude::LocalSocketStream;
-
+    async fn get_fresh_connection(&self) -> Result<Either<PooledConnection, IpcStream>> {
         // 首先尝试从连接池获取新连接
         if let Some(ref pool) = self.pool {
             match tokio::time::timeout(Duration::from_millis(20), pool.get_fresh_connection()).await {
@@ -426,12 +418,7 @@ impl IpcHttpClient {
         }
 
         // 直接创建连接，使用更快的超时设置
-        match tokio::time::timeout(
-            Duration::from_millis(100),
-            LocalSocketStream::connect(self.name.clone()),
-        )
-        .await
-        {
+        match tokio::time::timeout(Duration::from_millis(100), IpcStream::connect(&self.endpoint)).await {
             Ok(Ok(stream)) => Ok(Either::Direct(stream)),
             Ok(Err(_)) | Err(_) => {
                 // 如果直接连接失败，回退到普通池化连接

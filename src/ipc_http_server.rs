@@ -5,20 +5,10 @@
 
 use crate::codec::HttpIpcCodec;
 use crate::errors::{KodeBridgeError, Result};
+use crate::transport::{Endpoint, Listener, ListenerOptions, ServerStream};
 use bytes::Bytes;
 use futures::{SinkExt as _, StreamExt as _};
 use http::{HeaderMap, Method, StatusCode, Uri};
-use interprocess::local_socket::{
-    tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath, ListenerOptions, Name,
-    ToFsName as _,
-};
-#[cfg(unix)]
-use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
-#[cfg(windows)]
-use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
-#[cfg(windows)]
-use interprocess::os::windows::security_descriptor::SecurityDescriptor;
-use interprocess::TryClone as _;
 use path_tree::PathTree;
 use std::{
     collections::HashMap,
@@ -34,8 +24,6 @@ use tokio::{sync::Semaphore, time::timeout};
 use tokio_util::codec::Framed;
 use tracing::{debug, error, info, warn};
 use url::Url;
-#[cfg(windows)]
-use widestring::U16CString;
 
 /// Configuration for HTTP IPC server
 #[derive(Debug, Clone, Copy)]
@@ -426,9 +414,9 @@ impl fmt::Display for ServerStats {
 
 /// High-level HTTP IPC server
 pub struct IpcHttpServer {
-    name: Name<'static>,
+    endpoint: Endpoint,
     config: ServerConfig,
-    listener_options: ListenerOptions<'static>,
+    listener_options: ListenerOptions,
     router: Arc<Router>,
     stats: Arc<SharedStats>,
     connection_semaphore: Arc<Semaphore>,
@@ -437,15 +425,11 @@ pub struct IpcHttpServer {
 
 impl IpcHttpServer {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()
-            .map_err(|e| KodeBridgeError::configuration(format!("Invalid server path: {}", e)))?
-            .into_owned();
+        let endpoint = Endpoint::new(path)?;
         let config = ServerConfig::default();
         let listener_options = ListenerOptions::new();
         Ok(Self {
-            name,
+            endpoint,
             config,
             listener_options,
             router: Arc::new(Router::new()),
@@ -456,15 +440,11 @@ impl IpcHttpServer {
     }
 
     pub fn with_config<P: AsRef<Path>>(path: P, config: ServerConfig) -> Result<Self> {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()
-            .map_err(|e| KodeBridgeError::configuration(format!("Invalid server path: {}", e)))?
-            .into_owned();
+        let endpoint = Endpoint::new(path)?;
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
         let listener_options = ListenerOptions::new();
         Ok(Self {
-            name,
+            endpoint,
             config,
             listener_options,
             router: Arc::new(Router::new()),
@@ -474,22 +454,27 @@ impl IpcHttpServer {
         })
     }
 
-    pub fn with_listener_options(mut self, options: ListenerOptions<'static>) -> Self {
+    #[cfg(unix)]
+    pub const fn with_listener_options(mut self, options: ListenerOptions) -> Self {
+        self.listener_options = options;
+        self
+    }
+
+    #[cfg(windows)]
+    pub fn with_listener_options(mut self, options: ListenerOptions) -> Self {
         self.listener_options = options;
         self
     }
 
     #[cfg(unix)]
-    pub fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
+    pub const fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
         self.listener_options = self.listener_options.mode(mode);
         self
     }
 
     #[cfg(windows)]
     pub fn with_listener_security_descriptor(mut self, sddl: &str) -> Self {
-        let sddl = U16CString::from_str(sddl).expect("Invalid SDDL string");
-        let sd = SecurityDescriptor::deserialize(&sddl).expect("Failed to parse SDDL");
-        self.listener_options = self.listener_options.security_descriptor(sd);
+        self.listener_options = self.listener_options.security_descriptor(sddl);
         self
     }
 
@@ -510,12 +495,9 @@ impl IpcHttpServer {
     }
 
     pub async fn serve(&mut self) -> Result<()> {
-        let listener_options = self.listener_options.try_clone()?;
-        let listener = listener_options
-            .name(self.name.clone())
-            .create_tokio()
+        let mut listener = Listener::bind(&self.endpoint, &self.listener_options)
             .map_err(|e| KodeBridgeError::connection(format!("Failed to bind server: {}", e)))?;
-        info!("🚀 HTTP IPC Server listening on {:?}", self.name);
+        info!("🚀 HTTP IPC Server listening on {:?}", self.endpoint);
 
         // TODO: Graceful shutdown handling with custom signal
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
@@ -601,7 +583,7 @@ impl IpcHttpServer {
     }
 
     async fn handle_connection(
-        stream: LocalSocketStream,
+        stream: ServerStream,
         connection_id: u64,
         router: Arc<Router>,
         config: ServerConfig,
@@ -716,7 +698,7 @@ impl IpcHttpServer {
 impl fmt::Debug for IpcHttpServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("IpcHttpServer")
-            .field("name", &self.name)
+            .field("endpoint", &self.endpoint)
             .field("config", &self.config)
             .field("stats", &self.stats)
             .finish()

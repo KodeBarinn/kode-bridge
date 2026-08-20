@@ -8,6 +8,9 @@ pub mod parser_cache;
 pub mod pool;
 pub mod response;
 pub mod retry;
+mod transport;
+
+pub use transport::{Endpoint, IpcStream, ListenerOptions};
 
 #[cfg(feature = "client")]
 pub mod ipc_http_client;

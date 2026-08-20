@@ -2,6 +2,51 @@
 
 Complete guide for migrating to kode-bridge's modern architecture.
 
+## Migrating from 0.4 to 0.5
+
+Version 0.5 replaces the `interprocess` dependency with kode-bridge's Tokio-native transport adapter. The HTTP-over-IPC wire format and the normal client/server constructors, request methods, and permission builders are unchanged. Most applications only need to update the dependency version.
+
+```toml
+[dependencies]
+kode-bridge = "0.5"
+```
+
+The minimum supported Rust version is now 1.87. This matches the toolchain used by kode-bridge CI and the minimum required by its current target dependencies.
+
+Three public type boundaries necessarily change because 0.4 exposed types owned by `interprocess`:
+
+| 0.4 API | 0.5 API | Migration |
+|---------|---------|-----------|
+| Server `with_listener_options(interprocess::...::ListenerOptions)` | `with_listener_options(kode_bridge::ListenerOptions)` | Import and build `kode_bridge::ListenerOptions`. |
+| `ConnectionPool::{new, with_default_config}(Name)` | The same methods accepting `kode_bridge::Endpoint` | Validate the path once with `Endpoint::new(path)?`. |
+| `PooledConnection::{stream, into_stream}` returning `LocalSocketStream` | The same methods returning `kode_bridge::IpcStream` | Remove explicit `LocalSocketStream` annotations; `IpcStream` implements Tokio `AsyncRead` and `AsyncWrite`. |
+
+For example, direct pool construction now uses an `Endpoint`:
+
+```rust
+use kode_bridge::{
+    pool::{ConnectionPool, PoolConfig},
+    Endpoint,
+};
+
+let endpoint = Endpoint::new("/tmp/service.sock")?;
+let pool = ConnectionPool::new(endpoint, PoolConfig::default());
+```
+
+Server permission builders keep their prior call shape:
+
+```rust
+#[cfg(all(unix, not(target_os = "macos")))]
+let server = IpcHttpServer::new("/tmp/service.sock")?
+    .with_listener_mode(0o640);
+
+#[cfg(windows)]
+let server = IpcHttpServer::new(r"\\.\pipe\service")?
+    .with_listener_security_descriptor("D:(A;;GA;;;WD)");
+```
+
+Unix listeners still clean up their socket path when dropped. They do not replace stale paths by default. Cleanup checks the path's socket type and device/inode identity, but safe standard-library APIs cannot make compare-and-delete atomic; use a trusted parent directory that untrusted processes cannot modify. Windows endpoint strings must use `\\HOST\pipe\NAME`; malformed paths and invalid SDDL are rejected during configuration.
+
 ## 🔄 Migration from Platform-Specific Code
 
 ### Migration from Platform-Specific Code
@@ -64,7 +109,7 @@ let response = client.request("GET", "/api/status", None).await?;
 #### Step 1: Update Dependencies
 ```toml
 [dependencies]
-kode-bridge = "0.1"
+kode-bridge = "0.5"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

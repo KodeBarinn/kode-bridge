@@ -4,20 +4,8 @@
 //! real-time data to multiple clients with different streaming patterns.
 
 use crate::errors::{KodeBridgeError, Result};
+use crate::transport::{Endpoint, Listener, ListenerOptions, ServerStream};
 use bytes::Bytes;
-#[cfg(unix)]
-use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
-#[cfg(windows)]
-use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
-#[cfg(windows)]
-use interprocess::os::windows::security_descriptor::SecurityDescriptor;
-use interprocess::{
-    local_socket::{
-        tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath, ListenerOptions, Name,
-        ToFsName as _,
-    },
-    TryClone as _,
-};
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::{
@@ -39,8 +27,6 @@ use tokio::{
 };
 use tokio_stream::{Stream, StreamExt as _};
 use tracing::{debug, error, info, warn};
-#[cfg(windows)]
-use widestring::U16CString;
 
 /// Configuration for streaming IPC server
 #[derive(Debug, Clone)]
@@ -340,9 +326,9 @@ where
 
 /// High-level streaming IPC server
 pub struct IpcStreamServer {
-    name: Name<'static>,
+    endpoint: Endpoint,
     config: StreamServerConfig,
-    listener_options: ListenerOptions<'static>,
+    listener_options: ListenerOptions,
     stats: Arc<RwLock<StreamServerStats>>,
     connection_semaphore: Arc<Semaphore>,
     clients: Arc<RwLock<HashMap<u64, StreamClient>>>,
@@ -354,11 +340,7 @@ pub struct IpcStreamServer {
 impl IpcStreamServer {
     /// Create a new streaming IPC server
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()
-            .map_err(|e| KodeBridgeError::configuration(format!("Invalid server path: {}", e)))?
-            .into_owned();
+        let endpoint = Endpoint::new(path)?;
 
         let config = StreamServerConfig::default();
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
@@ -366,7 +348,7 @@ impl IpcStreamServer {
         let listener_options = ListenerOptions::new();
 
         Ok(Self {
-            name,
+            endpoint,
             config,
             listener_options,
             stats: Arc::new(RwLock::new(StreamServerStats::new())),
@@ -380,18 +362,14 @@ impl IpcStreamServer {
 
     /// Create a new streaming IPC server with custom configuration
     pub fn with_config<P: AsRef<Path>>(path: P, config: StreamServerConfig) -> Result<Self> {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()
-            .map_err(|e| KodeBridgeError::configuration(format!("Invalid server path: {}", e)))?
-            .into_owned();
+        let endpoint = Endpoint::new(path)?;
 
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
 
         let listener_options = ListenerOptions::new();
 
         Ok(Self {
-            name,
+            endpoint,
             config,
             listener_options,
             stats: Arc::new(RwLock::new(StreamServerStats::new())),
@@ -403,7 +381,14 @@ impl IpcStreamServer {
         })
     }
 
-    pub fn with_listener_options(mut self, options: ListenerOptions<'static>) -> Self {
+    #[cfg(unix)]
+    pub const fn with_listener_options(mut self, options: ListenerOptions) -> Self {
+        self.listener_options = options;
+        self
+    }
+
+    #[cfg(windows)]
+    pub fn with_listener_options(mut self, options: ListenerOptions) -> Self {
         self.listener_options = options;
         self
     }
@@ -420,7 +405,7 @@ impl IpcStreamServer {
     /// let server = IpcStreamServer::new("/tmp/my.sock").unwrap().with_listener_mode(0o660); // Only owner and group can read/write
     /// ```
     #[cfg(unix)]
-    pub fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
+    pub const fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
         self.listener_options = self.listener_options.mode(mode);
         self
     }
@@ -448,9 +433,7 @@ impl IpcStreamServer {
     /// See [Microsoft SDDL documentation](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format)
     #[cfg(windows)]
     pub fn with_listener_security_descriptor(mut self, sddl: &str) -> Self {
-        let sddl = U16CString::from_str(sddl).expect("Invalid SDDL string");
-        let sd = SecurityDescriptor::deserialize(&sddl).expect("Failed to parse SDDL");
-        self.listener_options = self.listener_options.security_descriptor(sd);
+        self.listener_options = self.listener_options.security_descriptor(sddl);
         self
     }
 
@@ -485,13 +468,10 @@ impl IpcStreamServer {
         let (broadcast_tx, _) = broadcast::channel(self.config.broadcast_capacity);
         self.broadcast_tx = Some(broadcast_tx.clone());
 
-        let listener_options = self.listener_options.try_clone()?;
-        let listener = listener_options
-            .name(self.name.clone())
-            .create_tokio()
+        let mut listener = Listener::bind(&self.endpoint, &self.listener_options)
             .map_err(|e| KodeBridgeError::connection(format!("Failed to bind server: {}", e)))?;
 
-        info!("🌊 Stream IPC Server listening on {:?}", self.name);
+        info!("🌊 Stream IPC Server listening on {:?}", self.endpoint);
 
         // Initialize data source
         source.initialize().await?;
@@ -677,7 +657,7 @@ impl IpcStreamServer {
     /// Handle a single streaming client connection
     #[allow(clippy::cognitive_complexity)]
     async fn handle_stream_client(
-        mut stream: LocalSocketStream,
+        mut stream: ServerStream,
         client_id: u64,
         mut broadcast_rx: broadcast::Receiver<StreamMessage>,
         config: StreamServerConfig,
@@ -780,7 +760,7 @@ impl IpcStreamServer {
 impl fmt::Debug for IpcStreamServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("IpcStreamServer")
-            .field("name", &self.name)
+            .field("endpoint", &self.endpoint)
             .field("config", &self.config)
             .field("stats", &self.stats)
             .finish()

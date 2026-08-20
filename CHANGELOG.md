@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-15
+
+### Changed
+
+- Replace the `interprocess` transport with a thin kode-bridge transport layer backed directly by Tokio Unix domain sockets and Windows named pipes.
+- Replace public `interprocess` types with kode-bridge's `Endpoint`, `ListenerOptions`, and `IpcStream` types. Client and server constructors, server permission builders, and pooled stream accessors keep their existing method names.
+- Change `ConnectionPool::new` and `ConnectionPool::with_default_config` to accept a validated `Endpoint`.
+- Preserve the existing HTTP-over-IPC wire format, request behavior, connection pooling, streaming, timeouts, and retry configuration.
+- Preserve the 0.4 Windows named-pipe buffer and flush/linger behavior using 512-byte pipe buffers and a cancellation-independent background flush queue.
+- Raise the minimum supported Rust version from 1.83 to 1.87, matching the repository CI and target dependency requirements.
+
+### Security
+
+- Keep Windows named pipes local-only by default and apply a configured SDDL security descriptor to every pipe instance.
+- Check Unix socket type and device/inode identity before listener startup and drop cleanup. Stale-socket replacement refuses regular files and live listeners; deployments must still use a trusted parent directory to exclude replacement after the final safe metadata check.
+
+### Internal
+
+- Remove the `interprocess`, `widestring`, and transitive `doctest-file` dependencies.
+- Add real cross-platform IPC integration tests and Criterion transport benchmarks for connection, request, pooling, payload, and concurrent-burst scenarios.
+
 ## [0.4.0] - 2026-04-24
 
 ### Performance

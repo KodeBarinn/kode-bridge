@@ -51,6 +51,24 @@ let client = IpcHttpClient::new(r"\\.\pipe\service")?; // Windows
 - **Windows**: Named Pipes with native Windows integration
 - **Feature flags**: Compile only client or server functionality as needed
 
+Endpoint paths are validated when a client or server is constructed. Unix endpoints are file-system paths and cannot contain an interior NUL. Windows endpoints must use the named-pipe form `\\HOST\pipe\NAME`, normally `\\.\pipe\NAME` for the local machine.
+
+### Listener Permissions
+
+The existing server builders remain available in 0.5.0:
+
+```rust
+#[cfg(all(unix, not(target_os = "macos")))]
+let server = IpcHttpServer::new("/tmp/service.sock")?
+    .with_listener_mode(0o640);
+
+#[cfg(windows)]
+let server = IpcHttpServer::new(r"\\.\pipe\service")?
+    .with_listener_security_descriptor("D:(A;;GA;;;WD)");
+```
+
+Linux and other supported Unix systems apply the requested mode before listening. macOS continues to report `Unsupported` when a custom listener mode is configured. On Windows, the SDDL descriptor is parsed during builder configuration and applied to every named-pipe instance.
+
 ## 🔧 Feature Flags
 
 Configure your `Cargo.toml` based on your needs:
@@ -58,13 +76,13 @@ Configure your `Cargo.toml` based on your needs:
 ```toml
 [dependencies]
 # Client only (default) - 🔥 Most common setup
-kode-bridge = "0.1"
+kode-bridge = "0.5"
 
 # Server only - For services that only serve data
-kode-bridge = { version = "0.1", features = ["server"] }
+kode-bridge = { version = "0.5", features = ["server"] }
 
 # Both client and server - Full-featured applications
-kode-bridge = { version = "0.1", features = ["full"] }
+kode-bridge = { version = "0.5", features = ["full"] }
 ```
 
 ## 📋 Quick Examples
