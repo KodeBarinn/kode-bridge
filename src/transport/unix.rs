@@ -53,7 +53,10 @@ impl Listener {
             .then(|| SocketPathGuard::new(path.to_path_buf(), &metadata));
 
         if let Some(mode) = options.mode {
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(u32::from(mode)))?;
+            // mode_t is u16 on Apple targets and u32 on Linux.
+            #[allow(clippy::useless_conversion)]
+            let mode = u32::from(mode);
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
         }
 
         let current = socket_metadata(path)?;
