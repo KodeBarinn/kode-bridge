@@ -39,8 +39,8 @@ pub(super) async fn connect(path: &Path) -> io::Result<ClientStream> {
 
 #[cfg(feature = "server")]
 pub(crate) struct Listener {
-    inner: UnixListener,
     _path_guard: Option<SocketPathGuard>,
+    inner: UnixListener,
 }
 
 #[cfg(feature = "server")]
@@ -75,8 +75,8 @@ impl Listener {
 
         let inner = socket.listen(1024)?;
         Ok(Self {
-            inner,
             _path_guard: path_guard,
+            inner,
         })
     }
 
@@ -252,12 +252,12 @@ mod tests {
         let original = std::os::unix::net::UnixListener::bind(&guarded_path)?;
         let metadata = std::fs::symlink_metadata(&guarded_path)?;
         let guard = SocketPathGuard::new(guarded_path.clone(), &metadata);
-        drop(original);
         std::fs::remove_file(&guarded_path)?;
         let replacement = std::os::unix::net::UnixListener::bind(&guarded_path)?;
 
         drop(guard);
         assert!(guarded_path.exists());
+        drop(original);
         drop(replacement);
         std::fs::remove_file(guarded_path)?;
         Ok(())
