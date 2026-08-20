@@ -81,7 +81,7 @@ impl HttpServerGuard {
     async fn start(endpoint: PathBuf, config: ServerConfig, router: Router) -> TestResult<Self> {
         let mut server = IpcHttpServer::with_config(&endpoint, config)?.router(router);
         let task = tokio::spawn(async move { server.serve().await });
-        let mut guard = Self {
+        let guard = Self {
             endpoint,
             task: Some(task),
         };
@@ -89,7 +89,7 @@ impl HttpServerGuard {
         Ok(guard)
     }
 
-    async fn wait_until_ready(&mut self) -> TestResult {
+    async fn wait_until_ready(&self) -> TestResult {
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         loop {
             if self.task.as_ref().is_some_and(JoinHandle::is_finished) {
