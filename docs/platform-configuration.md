@@ -1,233 +1,194 @@
 # Platform Configuration Guide
 
-Complete guide for configuring kode-bridge across different platforms.
+kode-bridge constructors take an endpoint path directly. Environment variables
+are an application concern; the checked-in examples use `CUSTOM_SOCK` on Unix
+and `CUSTOM_PIPE` on Windows, but the library does not read either variable.
 
-## 🌍 Cross-Platform Configuration
+## Endpoint configuration
 
-### Environment Variables
+### Unix
 
-The library automatically detects your platform and uses appropriate IPC transport:
-
-#### Unix/Linux/macOS (Unix Domain Sockets)
-- **Variable**: `CUSTOM_SOCK`
-- **Default**: `/tmp/example.sock`
-- **Format**: Absolute path to socket file
-- **Examples**: 
-  ```bash
-  # Basic usage
-  CUSTOM_SOCK=/tmp/my_service.sock cargo run --example request
-  
-  # Service-specific paths
-  CUSTOM_SOCK=/var/run/my_app/api.sock cargo run --example elegant_http
-  CUSTOM_SOCK=/tmp/clash_api.sock cargo run --example traffic
-  ```
-
-#### Windows (Named Pipes)
-- **Variable**: `CUSTOM_PIPE` 
-- **Default**: `\\.\\pipe\\example`
-- **Format**: `\\.\\pipe\\pipe_name`
-- **Examples**:
-  ```cmd
-  REM Basic usage
-  set CUSTOM_PIPE=\\.\\pipe\\my_service
-  cargo run --example request
-  
-  REM Service-specific pipes
-  set CUSTOM_PIPE=\\.\\pipe\\clash_api
-  cargo run --example traffic
-  
-  REM PowerShell
-  $env:CUSTOM_PIPE="\\.\\pipe\\my_service"
-  cargo run --example elegant_http
-  ```
-
-### Modern Configuration Options
-
-#### HTTP Client Configuration
-```rust
-use kode_bridge::{IpcHttpClient, ClientConfig};
-use std::time::Duration;
-
-let config = ClientConfig {
-    default_timeout: Duration::from_secs(30),
-    enable_pooling: true,
-    pool_max_size: 10,
-    pool_min_idle: 2,
-    pool_max_idle_time_ms: 30000,
-    max_retries: 3,
-    retry_delay: Duration::from_millis(200),
-};
-
-let client = IpcHttpClient::with_config(&ipc_path, config)?;
+```bash
+CUSTOM_SOCK=/tmp/my-service.sock cargo run --example request
 ```
 
-#### Streaming Client Configuration
+Use `/tmp` for local development. For a production service, prefer a dedicated
+directory such as `/run/my-app` whose ownership and permissions prevent
+untrusted path replacement.
+
+```bash
+sudo install -d -o myapp -g myapp -m 0750 /run/my-app
+CUSTOM_SOCK=/run/my-app/api.sock cargo run --example request
+```
+
+Unix endpoints may be relative or absolute file-system paths, but cannot
+contain an interior NUL. The parent directory must already exist.
+
+### Windows
+
+Command Prompt:
+
+```cmd
+set CUSTOM_PIPE=\\.\pipe\my-service
+cargo run --example request
+```
+
+PowerShell:
+
+```powershell
+$env:CUSTOM_PIPE='\\.\pipe\my-service'
+cargo run --example request
+```
+
+Windows endpoints must use `\\HOST\pipe\NAME`. kode-bridge servers reject
+remote clients, so use the local `\\.\pipe\NAME` form.
+
+### `.env` examples
+
+Unquoted `.env` values do not need Rust string-literal escaping:
+
+```env
+# Unix
+CUSTOM_SOCK=/tmp/my-service.sock
+
+# Windows
+CUSTOM_PIPE=\\.\pipe\my-service
+```
+
+The examples call `dotenvy::dotenv()` before reading these values. Add
+`dotenvy` to your own application if you want the same behavior.
+
+## HTTP client configuration
+
+`ClientConfig` contains a nested `PoolConfig`; the older flattened
+`pool_max_size` and `pool_min_idle` fields do not exist.
+
+```rust
+use kode_bridge::{pool::PoolConfig, ClientConfig, IpcHttpClient};
+use std::time::Duration;
+
+let pool = PoolConfig {
+    max_size: 16,
+    min_idle: 4,
+    max_idle_time_ms: 30_000,
+    connection_timeout_ms: 5_000,
+    retry_delay_ms: 25,
+    max_retries: 3,
+    max_concurrent_requests: 16,
+    max_requests_per_second: None,
+};
+
+let config = ClientConfig {
+    default_timeout: Duration::from_secs(5),
+    pool_config: pool,
+    enable_pooling: true,
+    max_retries: 3,
+    retry_delay: Duration::from_millis(25),
+    max_concurrent_requests: 16,
+    max_requests_per_second: Some(50.0),
+};
+
+let client = IpcHttpClient::with_config(endpoint, config)?;
+```
+
+Choose pool limits from measured concurrent demand. A larger pool consumes more
+open handles and memory and does not guarantee lower latency.
+
+## Streaming client configuration
+
 ```rust
 use kode_bridge::{IpcStreamClient, StreamClientConfig};
 use std::time::Duration;
 
 let config = StreamClientConfig {
     default_timeout: Duration::from_secs(60),
-    max_retries: 5,
+    max_retries: 3,
     retry_delay: Duration::from_millis(100),
-    buffer_size: 32768, // Large buffer for high-throughput
+    buffer_size: 16 * 1024,
 };
 
-let stream_client = IpcStreamClient::with_config(&ipc_path, config)?;
+let client = IpcStreamClient::with_config(endpoint, config)?;
 ```
 
-## 📄 Environment File Configuration
+The buffer size is a user-space read buffer, not the Windows named-pipe kernel
+buffer size. Measure memory and throughput before increasing it broadly.
 
-### .env File Support
+## HTTP server configuration
 
-Create a `.env` file in your project root for persistent configuration:
-
-#### Unix/Linux/macOS .env example:
-```env
-# Unix Domain Socket configuration
-CUSTOM_SOCK=/tmp/my_service.sock
-
-# Alternative paths
-# CUSTOM_SOCK=/var/run/my_app/api.sock
-# CUSTOM_SOCK=/tmp/clash_api.sock
-```
-
-#### Windows .env example:
-```env
-# Named Pipe configuration (note: each backslash doubled for escaping)
-CUSTOM_PIPE=\\\\.\\pipe\\my_service
-
-# Alternative pipes
-# CUSTOM_PIPE=\\\\.\\pipe\\clash_api
-# CUSTOM_PIPE=\\\\.\\pipe\\app_communication
-```
-
-### Advanced Environment Configuration
-
-#### Development vs Production
-```env
-# Development
-CUSTOM_SOCK=/tmp/dev_service.sock
-LOG_LEVEL=debug
-ENABLE_POOLING=true
-MAX_RETRIES=3
-
-# Production (different .env file)
-CUSTOM_SOCK=/var/run/production/api.sock
-LOG_LEVEL=info
-ENABLE_POOLING=true
-MAX_RETRIES=5
-POOL_SIZE=20
-```
-
-#### Using Environment in Code
 ```rust
-use dotenv::dotenv;
-use std::env;
-use kode_bridge::{ClientConfig, IpcHttpClient};
+use kode_bridge::ServerConfig;
+use std::time::Duration;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenv().ok();
-    
-    // Platform-specific path resolution
-    #[cfg(unix)]
-    let ipc_path = env::var("CUSTOM_SOCK")
-        .unwrap_or_else(|_| "/tmp/default.sock".to_string());
-    
-    #[cfg(windows)]
-    let ipc_path = env::var("CUSTOM_PIPE")
-        .unwrap_or_else(|_| r"\\.\\pipe\\default".to_string());
-    
-    // Environment-driven configuration
-    let enable_pooling = env::var("ENABLE_POOLING")
-        .unwrap_or_else(|_| "true".to_string())
-        .parse::<bool>()
-        .unwrap_or(true);
-    
-    let config = ClientConfig {
-        enable_pooling,
-        ..Default::default()
-    };
-    
-    let client = IpcHttpClient::with_config(&ipc_path, config)?;
-    
-    Ok(())
-}
+let config = ServerConfig {
+    max_connections: 128,
+    read_timeout: Duration::from_secs(5),
+    write_timeout: Duration::from_secs(5),
+    max_request_size: 10 * 1024 * 1024,
+    max_header_size: 4096,
+    enable_logging: true,
+    max_requests_per_connection: 32,
+    shutdown_timeout: Duration::from_secs(3),
+};
 ```
 
-## 🔧 Platform-Specific Features and Optimizations
+`read_timeout` bounds waiting for and parsing the next request. Despite its
+name, `write_timeout` currently bounds the handler future; the subsequent
+response send does not have a separate server-side timeout in version 0.5.
 
-### Unix/Linux/macOS (Unix Domain Sockets)
+## Listener options
 
-#### Advantages
-- **Superior Performance**: Direct kernel communication without network stack
-- **Connection Pooling**: Excellent connection reuse and pooling performance
-- **File System Integration**: Socket files integrate with standard file permissions
-- **Process Communication**: Ideal for local service communication
+### Unix cleanup, overwrite, and mode
 
-#### Configuration
-- **Default Path**: `/tmp/example.sock`
-- **Permissions**: Automatically handles socket file permissions
-- **Cleanup**: Automatic socket file cleanup on client shutdown
+```rust
+#[cfg(unix)]
+let options = kode_bridge::ListenerOptions::new()
+    .reclaim_name(true)
+    .try_overwrite(true)
+    .max_spin_time(std::time::Duration::from_millis(100));
 
-#### Best Practices
+#[cfg(all(unix, not(target_os = "macos")))]
+let options = options.mode(0o660);
+```
+
+- `reclaim_name(true)` is the default.
+- `try_overwrite(false)` is the default.
+- Explicit overwrite refuses non-socket paths and live listeners.
+- Custom mode currently returns `Unsupported` on macOS.
+- Use a trusted parent directory because metadata-check then remove is not an
+  atomic compare-and-delete operation.
+
+### Windows SDDL
+
+```rust
+#[cfg(windows)]
+let options = kode_bridge::ListenerOptions::new()
+    .security_descriptor("D:(A;;GA;;;WD)");
+```
+
+The descriptor is parsed when configuring the builder and applied to every
+pipe instance. Invalid SDDL panics for compatibility with the 0.4 API. Prefer a
+least-privilege descriptor; `WD` grants access to Everyone and should not be a
+copy-paste production default.
+
+## Operational checks
+
+- Confirm the client and server resolve exactly the same endpoint string.
+- Ensure the Unix socket parent exists and has the intended ownership.
+- Treat `Address already in use` as a live-listener or stale-path decision;
+  enable overwrite only when that policy is intentional.
+- On Windows, distinguish an absent pipe from `ERROR_PIPE_BUSY`; kode-bridge
+  waits asynchronously for busy instances. High-level requests apply their
+  request timeout, while direct stream connects and preheating need an
+  application-owned cancellation boundary.
+- Exercise service identity and ACL behavior with the actual privileged and
+  unprivileged accounts used in production.
+
+## Benchmark configuration
+
 ```bash
-# Ensure socket directory exists and has proper permissions
-sudo mkdir -p /var/run/my_app
-sudo chown $USER:$USER /var/run/my_app
-
-# Use service-specific paths
-CUSTOM_SOCK=/var/run/my_app/api.sock
-
-# Development vs production paths
-# Development: /tmp/dev_app.sock
-# Production: /var/run/production/app.sock
+cargo bench --all-features --bench bench_version
+cargo bench --all-features --bench ipc_transport
 ```
 
-### Windows (Named Pipes)
-
-#### Advantages
-- **Native Windows IPC**: Optimized for Windows kernel architecture
-- **Security Integration**: Integrates with Windows security model
-- **Service Communication**: Excellent for Windows service communication
-- **Cross-Session**: Can communicate across user sessions when configured
-
-#### Configuration
-- **Default Path**: `\\.\\pipe\\example`
-- **Namespace**: Uses the `\\.\\pipe\\` namespace
-- **Security**: Automatic security descriptor management
-
-#### Best Practices
-```cmd
-REM Use descriptive pipe names
-set CUSTOM_PIPE=\\.\\pipe\\my_app_api
-
-REM Service-specific naming
-set CUSTOM_PIPE=\\.\\pipe\\clash_monitoring
-set CUSTOM_PIPE=\\.\\pipe\\system_metrics
-
-REM PowerShell configuration
-$env:CUSTOM_PIPE="\\.\\pipe\\my_service"
-```
-
-### Performance Characteristics
-
-#### Connection Pool Performance
-| Platform | Pool Efficiency | Connection Reuse | Throughput |
-|----------|----------------|------------------|------------|
-| Unix     | Excellent      | 95%+             | High       |
-| Windows  | Very Good      | 90%+             | High       |
-
-#### Benchmark Results
-```bash
-# Unix typically shows:
-# - Higher connection reuse rates
-# - Lower latency for frequent requests
-# - Better streaming performance
-
-# Windows shows:
-# - Stable performance across scenarios
-# - Good security integration
-# - Reliable service communication
-```
+Criterion results are machine-specific. Keep the endpoint generator, payload,
+sample parameters, toolchain, and host unchanged when comparing versions.

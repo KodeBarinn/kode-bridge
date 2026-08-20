@@ -4,20 +4,8 @@
 //! real-time data to multiple clients with different streaming patterns.
 
 use crate::errors::{KodeBridgeError, Result};
+use crate::transport::{Endpoint, Listener, ListenerOptions, ServerStream};
 use bytes::Bytes;
-#[cfg(unix)]
-use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
-#[cfg(windows)]
-use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
-#[cfg(windows)]
-use interprocess::os::windows::security_descriptor::SecurityDescriptor;
-use interprocess::{
-    local_socket::{
-        tokio::prelude::LocalSocketStream, traits::tokio::Listener as _, GenericFilePath, ListenerOptions, Name,
-        ToFsName as _,
-    },
-    TryClone as _,
-};
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::{
@@ -39,8 +27,6 @@ use tokio::{
 };
 use tokio_stream::{Stream, StreamExt as _};
 use tracing::{debug, error, info, warn};
-#[cfg(windows)]
-use widestring::U16CString;
 
 /// Configuration for streaming IPC server
 #[derive(Debug, Clone)]
@@ -136,6 +122,21 @@ impl StreamMessage {
     /// Create a binary message
     pub fn binary<T: Into<Bytes>>(data: T) -> Self {
         Self::Binary(data.into())
+    }
+}
+
+#[derive(Clone)]
+enum BroadcastMessage {
+    Data(Bytes),
+    Close,
+}
+
+impl From<StreamMessage> for BroadcastMessage {
+    fn from(message: StreamMessage) -> Self {
+        match message {
+            StreamMessage::Close => Self::Close,
+            message => Self::Data(message.to_bytes()),
+        }
     }
 }
 
@@ -271,15 +272,15 @@ impl JsonDataSource {
 impl StreamSource for JsonDataSource {
     fn next_messages(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamMessage>>> + Send + '_>> {
         Box::pin(async move {
-            let now = Instant::now();
-            if now.duration_since(self.last_generated) >= self.interval {
-                self.last_generated = now;
-                match (self.generator)() {
-                    Ok(value) => Ok(vec![StreamMessage::Json(value)]),
-                    Err(e) => Err(e),
-                }
-            } else {
-                Ok(vec![])
+            let deadline = self.last_generated + self.interval;
+            if self.interval > Duration::ZERO && Instant::now() < deadline {
+                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+            }
+
+            self.last_generated = Instant::now();
+            match (self.generator)() {
+                Ok(value) => Ok(vec![StreamMessage::Json(value)]),
+                Err(error) => Err(error),
             }
         })
     }
@@ -300,6 +301,7 @@ impl StreamSource for JsonDataSource {
 /// Stream from an async iterator
 pub struct IteratorSource<S> {
     stream: S,
+    exhausted: bool,
 }
 
 impl<S> IteratorSource<S>
@@ -308,7 +310,10 @@ where
 {
     /// Create a new iterator source
     pub const fn new(stream: S) -> Self {
-        Self { stream }
+        Self {
+            stream,
+            exhausted: false,
+        }
     }
 }
 
@@ -320,13 +325,16 @@ where
         Box::pin(async move {
             match self.stream.next().await {
                 Some(message) => Ok(vec![message]),
-                None => Ok(vec![]),
+                None => {
+                    self.exhausted = true;
+                    Ok(vec![])
+                }
             }
         })
     }
 
     fn has_more(&self) -> bool {
-        true // Stream sources are considered to always have potential data
+        !self.exhausted
     }
 
     fn initialize(&mut self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
@@ -340,25 +348,21 @@ where
 
 /// High-level streaming IPC server
 pub struct IpcStreamServer {
-    name: Name<'static>,
+    endpoint: Endpoint,
     config: StreamServerConfig,
-    listener_options: ListenerOptions<'static>,
+    listener_options: ListenerOptions,
     stats: Arc<RwLock<StreamServerStats>>,
     connection_semaphore: Arc<Semaphore>,
     clients: Arc<RwLock<HashMap<u64, StreamClient>>>,
     client_id_counter: Arc<AtomicU64>,
-    broadcast_tx: Option<broadcast::Sender<StreamMessage>>,
+    broadcast_tx: Option<broadcast::Sender<BroadcastMessage>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl IpcStreamServer {
     /// Create a new streaming IPC server
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()
-            .map_err(|e| KodeBridgeError::configuration(format!("Invalid server path: {}", e)))?
-            .into_owned();
+        let endpoint = Endpoint::new(path)?;
 
         let config = StreamServerConfig::default();
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
@@ -366,7 +370,7 @@ impl IpcStreamServer {
         let listener_options = ListenerOptions::new();
 
         Ok(Self {
-            name,
+            endpoint,
             config,
             listener_options,
             stats: Arc::new(RwLock::new(StreamServerStats::new())),
@@ -380,18 +384,14 @@ impl IpcStreamServer {
 
     /// Create a new streaming IPC server with custom configuration
     pub fn with_config<P: AsRef<Path>>(path: P, config: StreamServerConfig) -> Result<Self> {
-        let name = path
-            .as_ref()
-            .to_fs_name::<GenericFilePath>()
-            .map_err(|e| KodeBridgeError::configuration(format!("Invalid server path: {}", e)))?
-            .into_owned();
+        let endpoint = Endpoint::new(path)?;
 
         let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
 
         let listener_options = ListenerOptions::new();
 
         Ok(Self {
-            name,
+            endpoint,
             config,
             listener_options,
             stats: Arc::new(RwLock::new(StreamServerStats::new())),
@@ -403,7 +403,14 @@ impl IpcStreamServer {
         })
     }
 
-    pub fn with_listener_options(mut self, options: ListenerOptions<'static>) -> Self {
+    #[cfg(unix)]
+    pub const fn with_listener_options(mut self, options: ListenerOptions) -> Self {
+        self.listener_options = options;
+        self
+    }
+
+    #[cfg(windows)]
+    pub fn with_listener_options(mut self, options: ListenerOptions) -> Self {
         self.listener_options = options;
         self
     }
@@ -420,7 +427,7 @@ impl IpcStreamServer {
     /// let server = IpcStreamServer::new("/tmp/my.sock").unwrap().with_listener_mode(0o660); // Only owner and group can read/write
     /// ```
     #[cfg(unix)]
-    pub fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
+    pub const fn with_listener_mode(mut self, mode: libc::mode_t) -> Self {
         self.listener_options = self.listener_options.mode(mode);
         self
     }
@@ -434,17 +441,21 @@ impl IpcStreamServer {
     /// Will panic if the SDDL string is invalid or cannot be parsed.
     ///
     /// # Example
-    /// ```rust
-    /// server = server.with_listener_security_descriptor("D:(A;;GA;;;WD)"); // Allow Everyone access
+    /// ```no_run
+    /// use kode_bridge::{IpcStreamServer, Result};
+    ///
+    /// # fn main() -> Result<()> {
+    /// let server = IpcStreamServer::new(r"\\.\pipe\kode-bridge-stream")?;
+    /// let _server = server.with_listener_security_descriptor("D:(A;;GA;;;WD)");
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Reference
     /// See [Microsoft SDDL documentation](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format)
     #[cfg(windows)]
     pub fn with_listener_security_descriptor(mut self, sddl: &str) -> Self {
-        let sddl = U16CString::from_str(sddl).expect("Invalid SDDL string");
-        let sd = SecurityDescriptor::deserialize(&sddl).expect("Failed to parse SDDL");
-        self.listener_options = self.listener_options.security_descriptor(sd);
+        self.listener_options = self.listener_options.security_descriptor(sddl);
         self
     }
 
@@ -461,7 +472,7 @@ impl IpcStreamServer {
     /// Broadcast a message to all connected clients
     pub fn broadcast(&self, message: StreamMessage) -> Result<usize> {
         if let Some(ref tx) = self.broadcast_tx {
-            match tx.send(message) {
+            match tx.send(message.into()) {
                 Ok(_) => Ok(tx.receiver_count()),
                 Err(_) => Err(KodeBridgeError::connection("No active receivers")),
             }
@@ -479,13 +490,10 @@ impl IpcStreamServer {
         let (broadcast_tx, _) = broadcast::channel(self.config.broadcast_capacity);
         self.broadcast_tx = Some(broadcast_tx.clone());
 
-        let listener_options = self.listener_options.try_clone()?;
-        let listener = listener_options
-            .name(self.name.clone())
-            .create_tokio()
+        let mut listener = Listener::bind(&self.endpoint, &self.listener_options)
             .map_err(|e| KodeBridgeError::connection(format!("Failed to bind server: {}", e)))?;
 
-        info!("🌊 Stream IPC Server listening on {:?}", self.name);
+        info!("🌊 Stream IPC Server listening on {:?}", self.endpoint);
 
         // Initialize data source
         source.initialize().await?;
@@ -511,7 +519,7 @@ impl IpcStreamServer {
                             Ok(messages) => {
                                 let message_count = messages.len() as u64;
                                 for message in messages {
-                                    if source_broadcast_tx.send(message).is_err() {
+                                    if source_broadcast_tx.send(message.into()).is_err() {
                                         debug!("No receivers for broadcast message");
                                     }
                                 }
@@ -538,8 +546,7 @@ impl IpcStreamServer {
                     }
                 }
 
-                // Small delay to prevent tight loops
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
 
             // Cleanup source
@@ -633,7 +640,7 @@ impl IpcStreamServer {
         source_task.abort();
 
         // Send close message to all clients
-        let _ = broadcast_tx.send(StreamMessage::Close);
+        let _ = broadcast_tx.send(BroadcastMessage::Close);
 
         // Wait for active connections to finish
         let start = Instant::now();
@@ -671,9 +678,9 @@ impl IpcStreamServer {
     /// Handle a single streaming client connection
     #[allow(clippy::cognitive_complexity)]
     async fn handle_stream_client(
-        mut stream: LocalSocketStream,
+        mut stream: ServerStream,
         client_id: u64,
-        mut broadcast_rx: broadcast::Receiver<StreamMessage>,
+        mut broadcast_rx: broadcast::Receiver<BroadcastMessage>,
         config: StreamServerConfig,
         stats: Arc<RwLock<StreamServerStats>>,
         clients: Arc<RwLock<HashMap<u64, StreamClient>>>,
@@ -689,27 +696,24 @@ impl IpcStreamServer {
                     match msg_result {
                         Ok(message) => {
                             match message {
-                                StreamMessage::Close => {
+                                BroadcastMessage::Close => {
                                     debug!("Received close message for client {}", client_id);
                                     break;
                                 }
-                                _ => {
-                                    // Send message to client
-                                    let data = message.to_bytes();
-
+                                BroadcastMessage::Data(data) => {
                                     if data.len() > config.max_message_size {
                                         warn!("Message too large for client {}, skipping", client_id);
                                         continue;
                                     }
 
-                                    match timeout(config.write_timeout, stream.write_all(&data)).await {
+                                    match timeout(config.write_timeout, async {
+                                        stream.write_all(&data).await?;
+                                        stream.flush().await
+                                    }).await {
                                         Ok(Ok(())) => {
-                                            if stream.flush().await.is_ok() {
-                                                // Update client stats
-                                                if let Some(client) = clients.write().get_mut(&client_id) {
-                                                    client.messages_sent += 1;
-                                                    client.last_activity = Instant::now();
-                                                }
+                                            if let Some(client) = clients.write().get_mut(&client_id) {
+                                                client.messages_sent += 1;
+                                                client.last_activity = Instant::now();
                                             }
                                         }
                                         Ok(Err(e)) => {
@@ -752,14 +756,19 @@ impl IpcStreamServer {
                         last_keepalive = now;
 
                         let ping_data = StreamMessage::Ping.to_bytes();
-                        if let Err(e) = timeout(config.write_timeout, stream.write_all(&ping_data)).await {
-                            warn!("Failed to send keepalive to client {}: {:?}", client_id, e);
-                            break;
-                        }
-
-                        if let Err(e) = stream.flush().await {
-                            warn!("Failed to flush keepalive to client {}: {}", client_id, e);
-                            break;
+                        match timeout(config.write_timeout, async {
+                            stream.write_all(&ping_data).await?;
+                            stream.flush().await
+                        }).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                warn!("Failed to send keepalive to client {}: {}", client_id, error);
+                                break;
+                            }
+                            Err(_) => {
+                                warn!("Keepalive write timeout for client {}", client_id);
+                                break;
+                            }
                         }
                     }
                 }
@@ -774,7 +783,7 @@ impl IpcStreamServer {
 impl fmt::Debug for IpcStreamServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("IpcStreamServer")
-            .field("name", &self.name)
+            .field("endpoint", &self.endpoint)
             .field("config", &self.config)
             .field("stats", &self.stats)
             .finish()

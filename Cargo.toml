@@ -1,7 +1,7 @@
 [package]
 name = "kode-bridge"
 authors = ["Tunglies"]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Modern HTTP Over IPC library for Rust with both client and server support (Unix sockets, Windows named pipes)."
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ categories = [
     "api-bindings",
     "asynchronous",
 ]
-rust-version = "1.83"
+rust-version = "1.87"
 
 [features]
 default = ["client"]
@@ -23,7 +23,6 @@ server = ["path-tree"]
 full = ["client", "server"]
 
 [dependencies]
-interprocess = { version = "2.4.3", features = ["tokio"] }
 tokio = { version = "1.53.1", features = [
     "rt",
     "rt-multi-thread",
@@ -32,6 +31,7 @@ tokio = { version = "1.53.1", features = [
     "time",
     "macros",
     "signal",
+    "net",
 ] }
 tokio-stream = { version = "0.1.19", features = ["io-util"] }
 tokio-util = { version = "0.7.19", features = ["codec", "io"] }
@@ -54,7 +54,11 @@ url = "2.5.8"
 libc = "0.2.189"
 
 [target.'cfg(windows)'.dependencies]
-widestring = "1.2.1"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+] }
 
 [dev-dependencies]
 dotenvy = "0.15.7"
@@ -96,6 +100,18 @@ path = "examples/traffic_monitor.rs"
 [[bench]]
 name = "bench_version"
 path = "benches/bench_version.rs"
+harness = false
+required-features = ["full"]
+
+[[bench]]
+name = "ipc_transport"
+path = "benches/ipc_transport.rs"
+harness = false
+required-features = ["full"]
+
+[[bench]]
+name = "hot_path"
+path = "benches/hot_path.rs"
 harness = false
 required-features = ["full"]
 

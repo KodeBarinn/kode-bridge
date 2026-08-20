@@ -195,7 +195,7 @@ impl LatencyTracker {
         Some(sum / self.samples.len() as u32)
     }
 
-    pub fn count(&self) -> usize {
+    pub const fn count(&self) -> usize {
         self.samples.len()
     }
 

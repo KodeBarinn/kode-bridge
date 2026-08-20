@@ -78,10 +78,14 @@ jobs:
           target
         key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
     
-    - name: Run cross-platform tests
+    - name: Check cross-platform build
+      run: cargo check --all-features
+
+    - name: Run IPC transport integration tests
+      run: cargo test --all-features --test ipc_transport
+
+    - name: Run complete cross-platform test suite
       run: |
-        # Ensure we can build and test on this platform
-        cargo check --all-features
         make test
 
   docs:

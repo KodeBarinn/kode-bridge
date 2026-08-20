@@ -58,9 +58,7 @@ format-check:
 # Run tests with coverage information
 test:
 	@echo "🧪 Running tests..."
-	cargo test --lib --all-features
-	@echo "📊 Running library tests specifically..."
-	cargo test --lib --quiet
+	cargo test --all-features
 
 # Build in release mode with optimization
 build:
