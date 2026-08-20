@@ -228,7 +228,9 @@ where
 
     // 先读取状态行
     let mut status_line = String::new();
-    reader.read_line(&mut status_line).await?;
+    if reader.read_line(&mut status_line).await? == 0 {
+        return Err(KodeBridgeError::StreamClosed);
+    }
     headers_buffer.extend_from_slice(status_line.as_bytes());
 
     // 读取HTTP头部直到遇到空行
@@ -423,4 +425,30 @@ where
     );
 
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn closed_response_stream_is_distinct_from_a_malformed_status() {
+        let (reader, writer) = tokio::io::duplex(1);
+        drop(writer);
+        assert!(matches!(
+            parse_response(reader).await,
+            Err(KodeBridgeError::StreamClosed)
+        ));
+
+        let (mut writer, reader) = tokio::io::duplex(64);
+        writer
+            .write_all(b"not an HTTP status\r\n\r\n")
+            .await
+            .unwrap();
+        drop(writer);
+        assert!(matches!(
+            parse_response(reader).await,
+            Err(KodeBridgeError::Protocol { .. })
+        ));
+    }
 }
