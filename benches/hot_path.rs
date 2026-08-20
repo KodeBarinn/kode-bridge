@@ -336,16 +336,16 @@ impl StreamBroadcastContext {
                 .send(StreamMessage::text(STREAM_WARMUP))
                 .await
                 .unwrap_or_else(|error| panic!("failed to publish stream warmup: {error}"));
-            while let Ok(event) = self.events.try_recv() {
-                if matches!(event, StreamEvent::Warmed) {
-                    warmed += 1;
-                }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if let Ok(Some(StreamEvent::Warmed)) =
+                timeout(Duration::from_millis(25).min(remaining), self.events.recv()).await
+            {
+                warmed += 1;
             }
             assert!(
                 Instant::now() < deadline,
                 "streaming benchmark clients did not subscribe in time"
             );
-            tokio::task::yield_now().await;
         }
     }
 
@@ -492,17 +492,18 @@ fn bench_stream_broadcast(c: &mut Criterion, context: &HttpBenchContext) {
             BenchmarkId::new("broadcast_write_flush", clients),
             &clients,
             |bencher, &clients| {
-                let endpoint = unique_endpoint("stream");
-                let broadcast = Arc::new(Mutex::new(
-                    context
-                        .runtime
-                        .block_on(StreamBroadcastContext::start(endpoint, clients)),
-                ));
-                bencher.to_async(&context.runtime).iter(|| {
-                    let broadcast = Arc::clone(&broadcast);
-                    async move {
-                        broadcast.lock().await.broadcast_once(clients).await;
-                    }
+                bencher.iter_custom(|iterations| {
+                    context.runtime.block_on(async {
+                        let endpoint = unique_endpoint("stream");
+                        let mut broadcast = StreamBroadcastContext::start(endpoint, clients).await;
+                        let started = Instant::now();
+                        for _ in 0..iterations {
+                            broadcast.broadcast_once(clients).await;
+                        }
+                        let elapsed = started.elapsed();
+                        drop(broadcast);
+                        elapsed
+                    })
                 });
             },
         );
