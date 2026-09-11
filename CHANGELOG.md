@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Return a pooled HTTP connection to the pool only after its response has been read to the end. A request cancelled by its timeout, or by dropping its future, used to hand the connection back with the response still in flight, so the next request on that connection read the stale response instead of its own.
 - Reject invalid or overflowing response `Content-Length` values instead of falling back to idle-based body reads, and consume the entire chunked trailer section before allowing connection reuse. Truncated chunked responses now fail instead of being accepted or waiting indefinitely at EOF.
+- Accept chunk extensions (`size;name=value`) in chunked responses; they were previously rejected as invalid chunk sizes.
 
 ### Changed
 

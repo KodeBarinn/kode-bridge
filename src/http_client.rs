@@ -330,13 +330,20 @@ where
         if reader.read_line(&mut size_line).await? == 0 {
             return Err(KodeBridgeError::StreamClosed);
         }
+        // Accept LF-only endings and chunk extensions ("size;name=value"); an empty
+        // size line still fails because it means the framing has desynchronised.
         let size_line = size_line
-            .strip_suffix("\r\n")
+            .strip_suffix('\n')
             .ok_or_else(|| KodeBridgeError::protocol("Incomplete chunk size line"))?;
+        let size_line = size_line.strip_suffix('\r').unwrap_or(size_line);
+        let size_field = size_line
+            .split_once(';')
+            .map_or(size_line, |(size, _)| size)
+            .trim();
 
         // Parse chunk size (hex)
         let chunk_size =
-            usize::from_str_radix(size_line, 16).map_err(|_| KodeBridgeError::protocol("Invalid chunk size"))?;
+            usize::from_str_radix(size_field, 16).map_err(|_| KodeBridgeError::protocol("Invalid chunk size"))?;
 
         if chunk_size == 0 {
             // Consume trailers through the final empty line before reuse.
@@ -346,10 +353,10 @@ where
                 if reader.read_line(&mut trailer_line).await? == 0 {
                     return Err(KodeBridgeError::StreamClosed);
                 }
-                if trailer_line == "\r\n" {
+                if trailer_line == "\r\n" || trailer_line == "\n" {
                     break;
                 }
-                if !trailer_line.ends_with("\r\n") {
+                if !trailer_line.ends_with('\n') {
                     return Err(KodeBridgeError::protocol("Incomplete chunk trailer"));
                 }
             }
@@ -361,10 +368,13 @@ where
         reader.read_exact(&mut chunk).await?;
         body_buffer.extend_from_slice(&chunk);
 
-        // Read trailing CRLF
-        let mut crlf = [0u8; 2];
-        reader.read_exact(&mut crlf).await?;
-        if crlf != *b"\r\n" {
+        // Chunk data ends with CRLF; tolerate a bare LF.
+        let mut terminator = [0u8; 1];
+        reader.read_exact(&mut terminator).await?;
+        if terminator[0] == b'\r' {
+            reader.read_exact(&mut terminator).await?;
+        }
+        if terminator[0] != b'\n' {
             return Err(KodeBridgeError::protocol("Invalid chunk terminator"));
         }
     }
