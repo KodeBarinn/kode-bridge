@@ -62,7 +62,7 @@ impl PoolConfig {
     }
 }
 
-/// A pooled connection wrapper
+/// A pooled connection wrapper.
 pub struct PooledConnection {
     inner: Option<IpcStream>,
     permit: Option<OwnedSemaphorePermit>,
@@ -85,10 +85,16 @@ impl PooledConnection {
         }
     }
 
-    /// Get the underlying stream
+    /// Borrow the stream, disabling reuse until [`Self::mark_reusable`] is called.
     pub fn stream(&mut self) -> Option<&mut IpcStream> {
         self.last_used = Instant::now();
+        self.reusable = false;
         self.inner.as_mut()
+    }
+
+    /// Allow reuse after the response has been fully consumed.
+    pub const fn mark_reusable(&mut self) {
+        self.reusable = true;
     }
 
     /// Take ownership of the underlying stream

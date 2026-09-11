@@ -342,18 +342,7 @@ impl IpcHttpClient {
                     let mut connection = self.get_connection().await?;
 
                     match &mut connection {
-                        Either::Pool(conn) => {
-                            if let Some(stream) = conn.stream() {
-                                let result = send_request(stream, request.clone()).await;
-                                if result.is_err() {
-                                    conn.invalidate();
-                                }
-                                result
-                            } else {
-                                conn.invalidate();
-                                Err(KodeBridgeError::connection("Pooled connection is invalid"))
-                            }
-                        }
+                        Either::Pool(conn) => send_pooled_request(conn, request.clone()).await,
                         Either::Direct(stream) => send_request(stream, request.clone()).await,
                     }
                 })
@@ -423,18 +412,7 @@ impl IpcHttpClient {
                     };
 
                     match &mut connection {
-                        Either::Pool(conn) => {
-                            if let Some(stream) = conn.stream() {
-                                let result = send_request(stream, request.clone()).await;
-                                if result.is_err() {
-                                    conn.invalidate();
-                                }
-                                result
-                            } else {
-                                conn.invalidate();
-                                Err(KodeBridgeError::connection("Pooled connection is invalid"))
-                            }
-                        }
+                        Either::Pool(conn) => send_pooled_request(conn, request.clone()).await,
                         Either::Direct(stream) => send_request(stream, request.clone()).await,
                     }
                 })
@@ -685,6 +663,28 @@ impl<'a> HttpRequestBuilder<'a> {
 enum Either<A, B> {
     Pool(A),
     Direct(B),
+}
+
+/// Restore reuse only after a complete framed response.
+async fn send_pooled_request(conn: &mut PooledConnection, request: Bytes) -> Result<Response> {
+    let Some(stream) = conn.stream() else {
+        return Err(KodeBridgeError::connection("Pooled connection is invalid"));
+    };
+    let response = send_request(stream, request).await?;
+    if leaves_stream_clean(&response) {
+        conn.mark_reusable();
+    }
+    Ok(response)
+}
+
+/// Framing is validated by `send_request`; idle-based reads cannot guarantee completion.
+fn leaves_stream_clean(response: &Response) -> bool {
+    let headers = response.headers();
+    headers.contains_key(http::header::CONTENT_LENGTH)
+        || headers
+            .get(http::header::TRANSFER_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.eq_ignore_ascii_case("chunked"))
 }
 
 impl Drop for IpcHttpClient {
