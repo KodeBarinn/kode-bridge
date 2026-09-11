@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-09-11
+
+### Fixed
+
+- Return a pooled HTTP connection to the pool only after its response has been read to the end. A request cancelled by its timeout, or by dropping its future, used to hand the connection back with the response still in flight, so the next request on that connection read the stale response instead of its own.
+- Reject invalid or overflowing response `Content-Length` values instead of falling back to idle-based body reads, and consume the entire chunked trailer section before allowing connection reuse. Truncated chunked responses now fail instead of being accepted or waiting indefinitely at EOF.
+
+### Changed
+
+- `PooledConnection::stream` now withdraws the connection from reuse; call the new `PooledConnection::mark_reusable` once the exchange is complete to return it to the pool. `PooledConnection::invalidate` keeps its meaning.
+
 ## [0.5.1] - 2026-08-20
 
 ### Added

@@ -273,11 +273,18 @@ where
         header_map.insert(header_name, header_value);
     }
 
-    // Determine body length
+    // Invalid lengths must not fall back to idle-based reads.
     let content_length = header_map
         .get(header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok());
+        .map(|value| {
+            value
+                .to_str()
+                .ok()
+                .filter(|value| value.bytes().all(|byte| byte.is_ascii_digit()))
+                .and_then(|value| value.parse::<usize>().ok())
+                .ok_or_else(|| KodeBridgeError::protocol("Invalid Content-Length in response"))
+        })
+        .transpose()?;
 
     let is_chunked = header_map
         .get(header::TRANSFER_ENCODING)
@@ -320,21 +327,32 @@ where
     loop {
         // Read chunk size line
         let mut size_line = String::new();
-        reader.read_line(&mut size_line).await?;
-
-        let size_line = size_line.trim();
-        if size_line.is_empty() {
-            continue;
+        if reader.read_line(&mut size_line).await? == 0 {
+            return Err(KodeBridgeError::StreamClosed);
         }
+        let size_line = size_line
+            .strip_suffix("\r\n")
+            .ok_or_else(|| KodeBridgeError::protocol("Incomplete chunk size line"))?;
 
         // Parse chunk size (hex)
         let chunk_size =
             usize::from_str_radix(size_line, 16).map_err(|_| KodeBridgeError::protocol("Invalid chunk size"))?;
 
         if chunk_size == 0 {
-            // Last chunk, read final CRLF
-            let mut final_line = String::new();
-            reader.read_line(&mut final_line).await?;
+            // Consume trailers through the final empty line before reuse.
+            let mut trailer_line = String::new();
+            loop {
+                trailer_line.clear();
+                if reader.read_line(&mut trailer_line).await? == 0 {
+                    return Err(KodeBridgeError::StreamClosed);
+                }
+                if trailer_line == "\r\n" {
+                    break;
+                }
+                if !trailer_line.ends_with("\r\n") {
+                    return Err(KodeBridgeError::protocol("Incomplete chunk trailer"));
+                }
+            }
             break;
         }
 
@@ -346,6 +364,9 @@ where
         // Read trailing CRLF
         let mut crlf = [0u8; 2];
         reader.read_exact(&mut crlf).await?;
+        if crlf != *b"\r\n" {
+            return Err(KodeBridgeError::protocol("Invalid chunk terminator"));
+        }
     }
 
     Ok(body_buffer.freeze())
