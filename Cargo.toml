@@ -36,7 +36,7 @@ tokio = { version = "1.53.1", features = [
 tokio-stream = { version = "0.1.19", features = ["io-util"] }
 tokio-util = { version = "0.7.19", features = ["codec", "io"] }
 futures = "0.3.34"
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 serde_json = "1.0.151"
 serde = { version = "1.0.229", features = ["derive"] }
 httparse = "1.10.1"
@@ -46,7 +46,7 @@ tracing = "0.1.44"
 parking_lot = "0.12.5"
 pin-project-lite = "0.2.17"
 toml = "1.1.6"
-rand = "0.10.2"
+rand = "0.10.3"
 path-tree = { version = "0.8.3", optional = true }
 url = "2.5.8"
 
