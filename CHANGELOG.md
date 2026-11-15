@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Close and join HTTP connection tasks when their server shuts down, so a connected Windows pipe can be rebound without waiting for its idle timeout.
+
+### Added
+
+- Provide a cloneable HTTP server shutdown handle for callers that own the serving task.
+
 ## [0.5.2] - 2026-09-11
 
 ### Fixed

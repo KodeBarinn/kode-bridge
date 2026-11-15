@@ -951,3 +951,77 @@ fn router_accepts_all_core_methods() {
         assert!(router.find_handler_and_params(&method, "/method").is_some());
     }
 }
+
+#[tokio::test]
+async fn http_shutdown_joins_pooled_connections_before_rebinding() -> TestResult {
+    let endpoint = unique_endpoint("http-owned-shutdown");
+    let mut config = server_config();
+    config.read_timeout = Duration::from_secs(60);
+    config.shutdown_timeout = Duration::from_secs(1);
+    let mut server = IpcHttpServer::with_config(&endpoint, config)?.router(test_router());
+    let shutdown = server.shutdown_handle();
+    let (server_tx, server_rx) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        server.serve().await?;
+        let _ = server_tx.send(server);
+        Ok(())
+    });
+    let mut guard = HttpServerGuard {
+        endpoint: endpoint.clone(),
+        task: Some(task),
+    };
+    guard.wait_until_ready().await?;
+    let client = pooled_client(&endpoint)?;
+    assert_eq!(client.get("/ready").send().await?.body()?, "ready");
+    shutdown.shutdown();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    shutdown.shutdown();
+    timeout(REQUEST_TIMEOUT, guard.task.take().ok_or("missing server task")?).await???;
+    let server = server_rx.await?;
+    assert_eq!(server.stats().active_connections, 0);
+    // Reusing the same server must not consume a duplicate request from the previous drain.
+    let rebound = HttpServerGuard::start_server(endpoint.clone(), server).await?;
+    // The original pooled client still owns its old pipe. It must reconnect to the new listener.
+    assert_eq!(client.get("/ready").send().await?.body()?, "ready");
+    rebound.stop().await
+}
+
+#[tokio::test]
+async fn http_shutdown_finishes_cancelling_handlers_before_returning() -> TestResult {
+    struct Dropped(Option<oneshot::Sender<()>>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+    let endpoint = unique_endpoint("http-handler-shutdown");
+    let started = Arc::new(Notify::new());
+    let notified = Arc::clone(&started);
+    let (dropped_tx, dropped_rx) = oneshot::channel();
+    let dropped_tx = Arc::new(std::sync::Mutex::new(Some(dropped_tx)));
+    let router = test_router().get("/hang", move |_ctx| {
+        let dropped = Dropped(dropped_tx.lock().unwrap().take());
+        let started = Arc::clone(&started);
+        async move {
+            let _dropped = dropped;
+            started.notify_one();
+            std::future::pending::<Result<HttpResponse>>().await
+        }
+    });
+    let mut config = server_config();
+    config.shutdown_timeout = Duration::ZERO;
+    let server = IpcHttpServer::with_config(&endpoint, config)?.router(router);
+    let shutdown = server.shutdown_handle();
+    let mut guard = HttpServerGuard::start_server(endpoint, server).await?;
+    let client = direct_client(&guard.endpoint)?;
+    let request = tokio::spawn(async move { client.get("/hang").send().await });
+    timeout(REQUEST_TIMEOUT, notified.notified()).await?;
+    shutdown.shutdown();
+    timeout(REQUEST_TIMEOUT, guard.task.take().ok_or("missing server task")?).await???;
+    // This acknowledgement comes from the handler's Drop, not only from the listener task.
+    timeout(REQUEST_TIMEOUT, dropped_rx).await??;
+    assert!(timeout(REQUEST_TIMEOUT, request).await??.is_err());
+    Ok(())
+}
