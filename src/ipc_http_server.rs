@@ -22,7 +22,11 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::Semaphore, time::timeout};
+use tokio::{
+    sync::{watch, OwnedSemaphorePermit, Semaphore},
+    task::JoinSet,
+    time::timeout,
+};
 use tokio_util::codec::Framed;
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -425,6 +429,31 @@ impl fmt::Display for ServerStats {
     }
 }
 
+/// Requests shutdown without borrowing the server that is currently serving.
+#[derive(Clone, Debug)]
+pub struct HttpServerShutdown {
+    sender: watch::Sender<bool>,
+}
+
+impl HttpServerShutdown {
+    pub fn shutdown(&self) {
+        self.sender.send_replace(true);
+    }
+}
+
+struct ActiveConnection {
+    stats: Arc<SharedStats>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl Drop for ActiveConnection {
+    fn drop(&mut self) {
+        self.stats
+            .active_connections
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// High-level HTTP IPC server
 pub struct IpcHttpServer {
     endpoint: Endpoint,
@@ -433,7 +462,7 @@ pub struct IpcHttpServer {
     router: Arc<Router>,
     stats: Arc<SharedStats>,
     connection_semaphore: Arc<Semaphore>,
-    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    shutdown: HttpServerShutdown,
 }
 
 impl IpcHttpServer {
@@ -448,7 +477,9 @@ impl IpcHttpServer {
             router: Arc::new(Router::new()),
             stats: Arc::new(SharedStats::new()),
             connection_semaphore: Arc::new(Semaphore::new(config.max_connections)),
-            shutdown_tx: None,
+            shutdown: HttpServerShutdown {
+                sender: watch::channel(false).0,
+            },
         })
     }
 
@@ -463,7 +494,9 @@ impl IpcHttpServer {
             router: Arc::new(Router::new()),
             stats: Arc::new(SharedStats::new()),
             connection_semaphore,
-            shutdown_tx: None,
+            shutdown: HttpServerShutdown {
+                sender: watch::channel(false).0,
+            },
         })
     }
 
@@ -512,11 +545,13 @@ impl IpcHttpServer {
             .map_err(|e| KodeBridgeError::connection(format!("Failed to bind server: {}", e)))?;
         info!("🚀 HTTP IPC Server listening on {:?}", self.endpoint);
 
-        // TODO: Graceful shutdown handling with custom signal
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
-        self.shutdown_tx = Some(shutdown_tx);
+        let mut shutdown_rx = self.shutdown.sender.subscribe();
+        let mut connections = JoinSet::new();
 
         loop {
+            while let Some(result) = connections.try_join_next() {
+                result.unwrap_or_else(|error| warn!("HTTP connection task failed: {error}"));
+            }
             let permit = tokio::select! {
                 permit_result = Arc::clone(&self.connection_semaphore).acquire_owned() => {
                     match permit_result {
@@ -527,7 +562,7 @@ impl IpcHttpServer {
                         }
                     }
                 }
-                _ = &mut shutdown_rx => {
+                _ = shutdown_rx.wait_for(|requested| *requested) => {
                     info!("Server shutdown requested");
                     break;
                 }
@@ -558,7 +593,9 @@ impl IpcHttpServer {
                             let config = self.config;
                             let stats = Arc::clone(&self.stats);
 
-                            tokio::spawn(async move {
+                            let active = ActiveConnection { stats: Arc::clone(&stats), _permit: permit };
+                            connections.spawn(async move {
+                                let _active = active;
                                 if let Err(e) = Self::handle_connection(
                                     stream,
                                     connection_id,
@@ -570,8 +607,6 @@ impl IpcHttpServer {
                                     error!("Connection {} error: {}", connection_id, e);
                                     stats.total_errors.fetch_add(1, Ordering::Relaxed);
                                 }
-                                stats.active_connections.fetch_sub(1, Ordering::Relaxed);
-                                drop(permit);
                             });
                         }
                         Err(e) => {
@@ -580,7 +615,7 @@ impl IpcHttpServer {
                         }
                     }
                 }
-                _ = &mut shutdown_rx => {
+                _ = shutdown_rx.wait_for(|requested| *requested) => {
                     drop(permit);
                     info!("Server shutdown requested");
                     break;
@@ -588,26 +623,33 @@ impl IpcHttpServer {
             }
         }
 
-        let start = Instant::now();
-        while self.stats.active_connections.load(Ordering::Relaxed) > 0
-            && start.elapsed() < self.config.shutdown_timeout
-        {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(listener);
+        let drained = timeout(self.config.shutdown_timeout, async {
+            while let Some(result) = connections.join_next().await {
+                result.unwrap_or_else(|error| warn!("HTTP connection task failed: {error}"));
+            }
+        })
+        .await;
+        if drained.is_err() {
+            warn!(
+                "Closing {} HTTP connections after the shutdown deadline",
+                connections.len()
+            );
+            connections.shutdown().await;
         }
 
-        let remaining = self.stats.active_connections.load(Ordering::Relaxed);
-        if remaining > 0 {
-            warn!("Shutting down with {} active connections", remaining);
-        }
-
+        // Requests during the drain coalesce; a completed server can be served again.
+        self.shutdown.sender.send_replace(false);
         info!("HTTP IPC Server stopped");
         Ok(())
     }
 
+    pub fn shutdown_handle(&self) -> HttpServerShutdown {
+        self.shutdown.clone()
+    }
+
     pub fn shutdown(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
+        self.shutdown.shutdown();
     }
 
     async fn handle_connection(

@@ -6,7 +6,7 @@ uses client APIs.
 
 ```toml
 [dependencies]
-kode-bridge = { version = "0.5", features = ["server"] }
+kode-bridge = { version = "0.5.3", features = ["server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 serde_json = "1"
 http = "1"
@@ -116,8 +116,8 @@ Create the server with `IpcHttpServer::with_config(endpoint, config)`.
 - `enable_logging` controls per-request server logging.
 
 `ServerStats` reports connections, requests, responses, errors, and start time.
-The server does not currently expose a cloneable runtime stats/control handle;
-plan ownership before moving the server into a task.
+Statistics remain snapshots; `shutdown_handle()` provides lifecycle control without borrowing
+the serving task.
 
 ## Streaming server
 
@@ -203,20 +203,31 @@ compatibility. Use a least-privilege descriptor for production services.
 
 ## Task lifecycle
 
-`serve()` runs until it is cancelled or its internal shutdown channel fires;
-accept errors are logged and the accept loop continues. Version 0.5 does not
-expose a separate shutdown handle. When the application owns the server task,
-cancellation is the usable external shutdown mechanism:
+`serve()` accepts connections until it is cancelled or its shutdown handle is signalled. The handle
+can be cloned before moving the server into its serving task:
 
-```rust
+```rust,no_run
+# use kode_bridge::{IpcHttpServer, Result};
+# async fn example() -> Result<()> {
+let mut server = IpcHttpServer::new("/tmp/example.sock")?;
+let shutdown = server.shutdown_handle();
 let task = tokio::spawn(async move { server.serve().await });
 tokio::signal::ctrl_c().await?;
-task.abort();
-let _ = task.await;
+shutdown.shutdown();
+task.await.unwrap()?;
+# Ok(())
+# }
 ```
 
-Await the cancelled task so the listener is dropped before restarting on the
-same endpoint. On Unix, that drop performs identity-checked path cleanup.
+Shutdown stops accepting connections, allows existing connections up to `shutdown_timeout` to finish,
+then aborts and joins the remaining connection tasks before returning. Cancelling the serve future
+also requests abortion of its owned connection tasks, but cannot wait for their cancellation to finish. Applications that admit background mutations independently
+of their HTTP response must retain their own operation lifetime across disconnected clients.
+
+On Unix, listener drop performs identity-checked path cleanup. On Windows, completed handle-driven shutdown joins the connections and closes their pipe instances
+before the endpoint is rebound. Waiting only for an externally cancelled parent task does not provide
+that join guarantee. Repeated shutdown requests during draining coalesce; the same server object
+can be served again after handle-driven shutdown completes.
 
 ## Performance guidance
 
