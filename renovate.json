@@ -1,6 +1,7 @@
 {
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", ":disableDependencyDashboard"],
-  "baseBranches": ["dev"],
+  "baseBranchPatterns": ["dev"],
   "enabledManagers": ["cargo"],
   "labels": ["dependencies"],
   "ignorePaths": [
@@ -11,16 +12,26 @@
     "**/crate/**",
     "shared/**"
   ],
-  "rangeStrategy": "bump",
+  "rangeStrategy": "update-lockfile",
+  "constraints": {"rust": "1.95.0"},
+  "constraintsFiltering": "strict",
+  "automerge": false,
   "packageRules": [
     {
       "semanticCommitType": "chore",
       "matchPackageNames": ["*"]
     },
     {
-      "description": "Group all cargo dependencies into a single PR",
+      "description": "Group Cargo updates within existing compatibility ranges",
       "matchManagers": ["cargo"],
+      "matchIsBreaking": false,
       "groupName": "cargo dependencies"
+    },
+    {
+      "description": "Review Cargo compatibility changes separately",
+      "matchManagers": ["cargo"],
+      "matchIsBreaking": true,
+      "groupName": null
     }
   ]
 }
