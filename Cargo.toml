@@ -33,28 +33,28 @@ tokio = { version = "1.54", features = [
     "signal",
     "net",
 ] }
-tokio-stream = { version = "0.1.19", features = ["io-util"] }
-tokio-util = { version = "0.7.20", features = ["codec", "io"] }
-futures = "0.3.34"
-thiserror = "2.0.21"
-serde_json = "1.0.154"
-serde = { version = "1.0.229", features = ["derive"] }
-httparse = "1.10.1"
+tokio-stream = { version = "0.1", features = ["io-util"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+futures = "0.3"
+thiserror = "2.0"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+httparse = "1.10"
 http = "1.5"
-bytes = { version = "1.12.1" }
-tracing = "0.1.44"
+bytes = { version = "1.12" }
+tracing = "0.1"
 parking_lot = "0.13"
-pin-project-lite = "0.2.17"
-toml = "1.2.1"
-rand = "0.10.4"
-path-tree = { version = "0.8.3", optional = true }
-url = "2.5.8"
+pin-project-lite = "0.2"
+toml = "1.2"
+rand = "0.10"
+path-tree = { version = "0.8", optional = true }
+url = "2.5"
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.191"
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -63,11 +63,11 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [dev-dependencies]
-dotenvy = "0.15.7"
+dotenvy = "0.15"
 criterion = { version = "=0.8.2", features = ["async_tokio"] }
-async-trait = "0.1.92"
-tracing-subscriber = "0.3.23"
-chrono = { version = "0.4.45", default-features = false, features = [
+async-trait = "0.1"
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", default-features = false, features = [
     "std",
     "clock",
 ] }
