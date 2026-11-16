@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.6.0] - 2026-11-16
+
+### Changed
+
+- Require Rust 1.95 and update compatible dependency ranges.
+- Upgrade public metrics lock fields to `parking_lot 0.13`; callers naming or constructing those fields must use the new lock types.
+
+### Fixed
+
+- Close and join HTTP connection tasks when their server shuts down, so a connected Windows pipe can be rebound without waiting for its idle timeout.
+
+### Added
+
+- Provide a cloneable HTTP server shutdown handle for callers that own the serving task.
+
 ## [0.5.2] - 2026-09-11
 
 ### Fixed

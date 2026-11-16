@@ -1,18 +1,18 @@
 # kode-bridge Server Guide
 
-This guide covers the server APIs available in kode-bridge 0.5. Enable the
+This guide covers the server APIs available in kode-bridge 0.6. Enable the
 `server` feature for server-only programs or `full` when the same crate also
 uses client APIs.
 
 ```toml
 [dependencies]
-kode-bridge = { version = "0.5", features = ["server"] }
+kode-bridge = { version = "0.6", features = ["server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 serde_json = "1"
 http = "1"
 ```
 
-Rust 1.87 or newer is required.
+Rust 1.95 or newer is required.
 
 ## HTTP server
 
@@ -116,8 +116,8 @@ Create the server with `IpcHttpServer::with_config(endpoint, config)`.
 - `enable_logging` controls per-request server logging.
 
 `ServerStats` reports connections, requests, responses, errors, and start time.
-The server does not currently expose a cloneable runtime stats/control handle;
-plan ownership before moving the server into a task.
+Statistics remain snapshots; `shutdown_handle()` provides lifecycle control without borrowing
+the serving task.
 
 ## Streaming server
 
@@ -163,7 +163,7 @@ It supplies `next_messages`, `has_more`, `initialize`, and `cleanup`; see
 [stream_server.rs](./examples/stream_server.rs) and the API documentation for
 the exact signatures.
 
-`IpcStreamClient` is not the direct client for `IpcStreamServer` in 0.5. The
+`IpcStreamClient` is not the direct client for `IpcStreamServer` in 0.6. The
 former parses an HTTP-style streamed response, while the latter emits raw
 newline-delimited frames. Use a raw Tokio `AsyncRead` client for the stream
 server protocol, or expose an HTTP-style streaming handler for
@@ -171,7 +171,7 @@ server protocol, or expose an HTTP-style streaming handler for
 
 The public `broadcast()` method requires the server's broadcast channel to be
 initialized, but `serve(&mut self)` holds the mutable server borrow. Version
-0.5 does not expose a cloneable broadcast/control handle, so
+0.6 does not expose a cloneable broadcast/control handle, so
 `serve_with_source` is the practical public API for ongoing broadcasts.
 
 ## Listener permissions and cleanup
@@ -203,20 +203,31 @@ compatibility. Use a least-privilege descriptor for production services.
 
 ## Task lifecycle
 
-`serve()` runs until it is cancelled or its internal shutdown channel fires;
-accept errors are logged and the accept loop continues. Version 0.5 does not
-expose a separate shutdown handle. When the application owns the server task,
-cancellation is the usable external shutdown mechanism:
+`serve()` accepts connections until it is cancelled or its shutdown handle is signalled. The handle
+can be cloned before moving the server into its serving task:
 
-```rust
+```rust,no_run
+# use kode_bridge::{IpcHttpServer, Result};
+# async fn example() -> Result<()> {
+let mut server = IpcHttpServer::new("/tmp/example.sock")?;
+let shutdown = server.shutdown_handle();
 let task = tokio::spawn(async move { server.serve().await });
 tokio::signal::ctrl_c().await?;
-task.abort();
-let _ = task.await;
+shutdown.shutdown();
+task.await.unwrap()?;
+# Ok(())
+# }
 ```
 
-Await the cancelled task so the listener is dropped before restarting on the
-same endpoint. On Unix, that drop performs identity-checked path cleanup.
+Shutdown stops accepting connections, allows existing connections up to `shutdown_timeout` to finish,
+then aborts and joins the remaining connection tasks before returning. Cancelling the serve future
+also requests abortion of its owned connection tasks, but cannot wait for their cancellation to finish. Applications that admit background mutations independently
+of their HTTP response must retain their own operation lifetime across disconnected clients.
+
+On Unix, listener drop performs identity-checked path cleanup. On Windows, completed handle-driven shutdown joins the connections and closes their pipe instances
+before the endpoint is rebound. Waiting only for an externally cancelled parent task does not provide
+that join guarantee. Repeated shutdown requests during draining coalesce; the same server object
+can be served again after handle-driven shutdown completes.
 
 ## Performance guidance
 
@@ -225,7 +236,7 @@ same endpoint. On Unix, that drop performs identity-checked path cleanup.
   per-connection memory.
 - Keep request and message limits explicit.
 - Do not shorten `write_timeout` below the slowest supported handler. Treat a
-  response-write deadline as an open server limitation in version 0.5.
+  response-write deadline as an open server limitation in version 0.6.
 - Run `cargo bench --all-features --bench ipc_transport` for transport changes.
 - Treat shared CI runners as functional evidence, not stable performance data.
 
