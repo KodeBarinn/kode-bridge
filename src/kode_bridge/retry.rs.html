@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/retry.rs`."><title>retry.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-916cea96.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="kode_bridge" data-themes="" data-resource-suffix="" data-rustdoc-version="1.87.0 (17067e9ac 2025-05-09)" data-channel="1.87.0" data-search-js="search-e7298875.js" data-settings-js="settings-d72f25bb.js" ><script src="../../static.files/storage-82c7156e.js"></script><script defer src="../../static.files/src-script-63605ae7.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-fb8c74a8.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">kode_bridge/</div>retry.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span><span class="kw">crate</span>::errors::KodeBridgeError;
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/retry.rs`."><title>retry.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="kode_bridge" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">kode_bridge/</div>retry.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span><span class="kw">crate</span>::errors::KodeBridgeError;
 <a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span>rand::random_range;
 <a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>std::time::{Duration, Instant};
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>tracing::{debug, warn};
@@ -504,7 +504,7 @@
 <a href=#504 id=504 data-nosnippet>504</a>
 <a href=#505 id=505 data-nosnippet>505</a><span class="attr">#[cfg(test)]
 <a href=#506 id=506 data-nosnippet>506</a></span><span class="kw">mod </span>tests {
-<a href=#507 id=507 data-nosnippet>507</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#507 id=507 data-nosnippet>507</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#508 id=508 data-nosnippet>508</a>    <span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
 <a href=#509 id=509 data-nosnippet>509</a>    <span class="kw">use </span>std::sync::Arc;
 <a href=#510 id=510 data-nosnippet>510</a>
@@ -514,7 +514,7 @@
 <a href=#514 id=514 data-nosnippet>514</a>        <span class="kw">let </span>executor = RetryExecutor::new(config);
 <a href=#515 id=515 data-nosnippet>515</a>
 <a href=#516 id=516 data-nosnippet>516</a>        <span class="kw">let </span>result = executor
-<a href=#517 id=517 data-nosnippet>517</a>            .execute(|| <span class="kw">async </span>{ <span class="prelude-val">Ok</span>::&lt;i32, KodeBridgeError&gt;(<span class="number">42</span>) })
+<a href=#517 id=517 data-nosnippet>517</a>            .execute(|| <span class="kw">async </span>{ Ok::&lt;i32, KodeBridgeError&gt;(<span class="number">42</span>) })
 <a href=#518 id=518 data-nosnippet>518</a>            .<span class="kw">await</span>;
 <a href=#519 id=519 data-nosnippet>519</a>
 <a href=#520 id=520 data-nosnippet>520</a>        <span class="macro">assert_eq!</span>(result.unwrap(), <span class="number">42</span>);
@@ -559,7 +559,7 @@
 <a href=#559 id=559 data-nosnippet>559</a>                <span class="kw">let </span>count = Arc::clone(<span class="kw-2">&amp;</span>attempt_count);
 <a href=#560 id=560 data-nosnippet>560</a>                <span class="kw">async move </span>{
 <a href=#561 id=561 data-nosnippet>561</a>                    count.fetch_add(<span class="number">1</span>, Ordering::SeqCst);
-<a href=#562 id=562 data-nosnippet>562</a>                    <span class="prelude-val">Err</span>::&lt;i32, <span class="kw">_</span>&gt;(KodeBridgeError::connection(<span class="string">"Always fails"</span>))
+<a href=#562 id=562 data-nosnippet>562</a>                    Err::&lt;i32, <span class="kw">_</span>&gt;(KodeBridgeError::connection(<span class="string">"Always fails"</span>))
 <a href=#563 id=563 data-nosnippet>563</a>                }
 <a href=#564 id=564 data-nosnippet>564</a>            })
 <a href=#565 id=565 data-nosnippet>565</a>            .<span class="kw">await</span>;
@@ -581,7 +581,7 @@
 <a href=#581 id=581 data-nosnippet>581</a>                <span class="kw">let </span>count = Arc::clone(<span class="kw-2">&amp;</span>attempt_count);
 <a href=#582 id=582 data-nosnippet>582</a>                <span class="kw">async move </span>{
 <a href=#583 id=583 data-nosnippet>583</a>                    count.fetch_add(<span class="number">1</span>, Ordering::SeqCst);
-<a href=#584 id=584 data-nosnippet>584</a>                    <span class="prelude-val">Err</span>::&lt;i32, <span class="kw">_</span>&gt;(KodeBridgeError::ClientError { status: <span class="number">400 </span>})
+<a href=#584 id=584 data-nosnippet>584</a>                    Err::&lt;i32, <span class="kw">_</span>&gt;(KodeBridgeError::ClientError { status: <span class="number">400 </span>})
 <a href=#585 id=585 data-nosnippet>585</a>                }
 <a href=#586 id=586 data-nosnippet>586</a>            })
 <a href=#587 id=587 data-nosnippet>587</a>            .<span class="kw">await</span>;
@@ -596,21 +596,21 @@
 <a href=#596 id=596 data-nosnippet>596</a>
 <a href=#597 id=597 data-nosnippet>597</a>        <span class="comment">// First failure
 <a href=#598 id=598 data-nosnippet>598</a>        </span><span class="kw">let </span>result = breaker
-<a href=#599 id=599 data-nosnippet>599</a>            .execute(|| <span class="kw">async </span>{ <span class="prelude-val">Err</span>::&lt;i32, <span class="kw">_</span>&gt;(KodeBridgeError::connection(<span class="string">"Failure 1"</span>)) })
+<a href=#599 id=599 data-nosnippet>599</a>            .execute(|| <span class="kw">async </span>{ Err::&lt;i32, <span class="kw">_</span>&gt;(KodeBridgeError::connection(<span class="string">"Failure 1"</span>)) })
 <a href=#600 id=600 data-nosnippet>600</a>            .<span class="kw">await</span>;
 <a href=#601 id=601 data-nosnippet>601</a>        <span class="macro">assert!</span>(result.is_err());
 <a href=#602 id=602 data-nosnippet>602</a>        <span class="macro">assert!</span>(!breaker.is_open());
 <a href=#603 id=603 data-nosnippet>603</a>
 <a href=#604 id=604 data-nosnippet>604</a>        <span class="comment">// Second failure - should open circuit
 <a href=#605 id=605 data-nosnippet>605</a>        </span><span class="kw">let </span>result = breaker
-<a href=#606 id=606 data-nosnippet>606</a>            .execute(|| <span class="kw">async </span>{ <span class="prelude-val">Err</span>::&lt;i32, <span class="kw">_</span>&gt;(KodeBridgeError::connection(<span class="string">"Failure 2"</span>)) })
+<a href=#606 id=606 data-nosnippet>606</a>            .execute(|| <span class="kw">async </span>{ Err::&lt;i32, <span class="kw">_</span>&gt;(KodeBridgeError::connection(<span class="string">"Failure 2"</span>)) })
 <a href=#607 id=607 data-nosnippet>607</a>            .<span class="kw">await</span>;
 <a href=#608 id=608 data-nosnippet>608</a>        <span class="macro">assert!</span>(result.is_err());
 <a href=#609 id=609 data-nosnippet>609</a>        <span class="macro">assert!</span>(breaker.is_open());
 <a href=#610 id=610 data-nosnippet>610</a>
 <a href=#611 id=611 data-nosnippet>611</a>        <span class="comment">// Third attempt should be rejected immediately
 <a href=#612 id=612 data-nosnippet>612</a>        </span><span class="kw">let </span>result = breaker
-<a href=#613 id=613 data-nosnippet>613</a>            .execute(|| <span class="kw">async </span>{ <span class="prelude-val">Ok</span>::&lt;i32, KodeBridgeError&gt;(<span class="number">42</span>) })
+<a href=#613 id=613 data-nosnippet>613</a>            .execute(|| <span class="kw">async </span>{ Ok::&lt;i32, KodeBridgeError&gt;(<span class="number">42</span>) })
 <a href=#614 id=614 data-nosnippet>614</a>            .<span class="kw">await</span>;
 <a href=#615 id=615 data-nosnippet>615</a>        <span class="macro">assert!</span>(result.is_err());
 <a href=#616 id=616 data-nosnippet>616</a>        <span class="macro">assert!</span>(result
@@ -653,4 +653,5 @@
 <a href=#653 id=653 data-nosnippet>653</a>        <span class="macro">assert_eq!</span>(config.max_attempts, <span class="number">10</span>);
 <a href=#654 id=654 data-nosnippet>654</a>        <span class="macro">assert_eq!</span>(config.base_delay, Duration::from_secs(<span class="number">1</span>));
 <a href=#655 id=655 data-nosnippet>655</a>    }
-<a href=#656 id=656 data-nosnippet>656</a>}</code></pre></div></section></main></body></html>
+<a href=#656 id=656 data-nosnippet>656</a>}
+</code></pre></div></section></main></body></html>
