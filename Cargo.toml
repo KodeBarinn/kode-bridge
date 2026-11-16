@@ -1,7 +1,7 @@
 [package]
 name = "kode-bridge"
 authors = ["Tunglies"]
-version = "0.5.3"
+version = "0.6.0"
 edition = "2021"
 description = "Modern HTTP Over IPC library for Rust with both client and server support (Unix sockets, Windows named pipes)."
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ categories = [
     "api-bindings",
     "asynchronous",
 ]
-rust-version = "1.87"
+rust-version = "1.95"
 
 [features]
 default = ["client"]
@@ -23,7 +23,7 @@ server = ["path-tree"]
 full = ["client", "server"]
 
 [dependencies]
-tokio = { version = "1.53.1", features = [
+tokio = { version = "1.54", features = [
     "rt",
     "rt-multi-thread",
     "io-util",
@@ -33,28 +33,28 @@ tokio = { version = "1.53.1", features = [
     "signal",
     "net",
 ] }
-tokio-stream = { version = "0.1.19", features = ["io-util"] }
-tokio-util = { version = "0.7.19", features = ["codec", "io"] }
-futures = "0.3.34"
-thiserror = "2.0.20"
-serde_json = "1.0.151"
-serde = { version = "1.0.229", features = ["derive"] }
-httparse = "1.10.1"
-http = "1.5.0"
-bytes = { version = "1.12.1" }
-tracing = "0.1.44"
-parking_lot = "0.12.5"
-pin-project-lite = "0.2.17"
-toml = "1.1.6"
-rand = "0.10.2"
-path-tree = { version = "0.8.3", optional = true }
-url = "2.5.8"
+tokio-stream = { version = "0.1", features = ["io-util"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+futures = "0.3"
+thiserror = "2.0"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+httparse = "1.10"
+http = "1.5"
+bytes = { version = "1.12" }
+tracing = "0.1"
+parking_lot = "0.13"
+pin-project-lite = "0.2"
+toml = "1.2"
+rand = "0.10"
+path-tree = { version = "0.8", optional = true }
+url = "2.5"
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.189"
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -63,11 +63,11 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [dev-dependencies]
-dotenvy = "0.15.7"
+dotenvy = "0.15"
 criterion = { version = "=0.8.2", features = ["async_tokio"] }
-async-trait = "0.1.92"
-tracing-subscriber = "0.3.23"
-chrono = { version = "0.4.45", default-features = false, features = [
+async-trait = "0.1"
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", default-features = false, features = [
     "std",
     "clock",
 ] }

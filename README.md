@@ -30,13 +30,13 @@
 ```toml
 [dependencies]
 # Client only (default)
-kode-bridge = "0.5"
+kode-bridge = "0.6"
 
 # Server only  
-kode-bridge = { version = "0.5", features = ["server"] }
+kode-bridge = { version = "0.6", features = ["server"] }
 
 # Both client and server
-kode-bridge = { version = "0.5", features = ["full"] }
+kode-bridge = { version = "0.6", features = ["full"] }
 
 # Required runtime
 tokio = { version = "1", features = ["full"] }

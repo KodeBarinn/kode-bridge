@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.3] - 2026-11-16
+## [0.6.0] - 2026-11-16
+
+### Changed
+
+- Require Rust 1.95 and update compatible dependency ranges.
+- Upgrade public metrics lock fields to `parking_lot 0.13`; callers naming or constructing those fields must use the new lock types.
 
 ### Fixed
 

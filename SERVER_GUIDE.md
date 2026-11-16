@@ -1,18 +1,18 @@
 # kode-bridge Server Guide
 
-This guide covers the server APIs available in kode-bridge 0.5. Enable the
+This guide covers the server APIs available in kode-bridge 0.6. Enable the
 `server` feature for server-only programs or `full` when the same crate also
 uses client APIs.
 
 ```toml
 [dependencies]
-kode-bridge = { version = "0.5.3", features = ["server"] }
+kode-bridge = { version = "0.6", features = ["server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 serde_json = "1"
 http = "1"
 ```
 
-Rust 1.87 or newer is required.
+Rust 1.95 or newer is required.
 
 ## HTTP server
 
@@ -163,7 +163,7 @@ It supplies `next_messages`, `has_more`, `initialize`, and `cleanup`; see
 [stream_server.rs](./examples/stream_server.rs) and the API documentation for
 the exact signatures.
 
-`IpcStreamClient` is not the direct client for `IpcStreamServer` in 0.5. The
+`IpcStreamClient` is not the direct client for `IpcStreamServer` in 0.6. The
 former parses an HTTP-style streamed response, while the latter emits raw
 newline-delimited frames. Use a raw Tokio `AsyncRead` client for the stream
 server protocol, or expose an HTTP-style streaming handler for
@@ -171,7 +171,7 @@ server protocol, or expose an HTTP-style streaming handler for
 
 The public `broadcast()` method requires the server's broadcast channel to be
 initialized, but `serve(&mut self)` holds the mutable server borrow. Version
-0.5 does not expose a cloneable broadcast/control handle, so
+0.6 does not expose a cloneable broadcast/control handle, so
 `serve_with_source` is the practical public API for ongoing broadcasts.
 
 ## Listener permissions and cleanup
@@ -236,7 +236,7 @@ can be served again after handle-driven shutdown completes.
   per-connection memory.
 - Keep request and message limits explicit.
 - Do not shorten `write_timeout` below the slowest supported handler. Treat a
-  response-write deadline as an open server limitation in version 0.5.
+  response-write deadline as an open server limitation in version 0.6.
 - Run `cargo bench --all-features --bench ipc_transport` for transport changes.
 - Treat shared CI runners as functional evidence, not stable performance data.
 
