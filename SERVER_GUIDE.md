@@ -6,7 +6,7 @@ uses client APIs.
 
 ```toml
 [dependencies]
-kode-bridge = { version = "0.5", features = ["server"] }
+kode-bridge = { version = "0.5.3", features = ["server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 serde_json = "1"
 http = "1"
